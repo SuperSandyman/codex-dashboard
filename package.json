@@ -1,0 +1,14 @@
+{
+  "name": "codex-dashboard",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "server"
+  ],
+  "scripts": {
+    "dev": "pnpm -C server dev & pnpm -C frontend dev",
+    "build": "pnpm -C frontend build && pnpm -C server build",
+    "start": "pnpm -C server start",
+    "lint": "pnpm -C frontend lint && pnpm -C server lint"
+  }
+}
