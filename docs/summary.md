@@ -30,3 +30,8 @@
 ## 開発方針
 - まず「Terminal で確実に動く」ことを最優先にし、Chat/Lens はログから生成する派生ビューとして後付けします。
 - 開発はホスト環境で回し、Docker は本番運用段階で検討します。
+
+## 起動メモ
+- サーバ起動: `pnpm -C server dev`
+- ルートから起動する場合: `pnpm dev`
+- 起動ログに `http://localhost:<PORT>` と LAN 向け URL（`BIND_HOST=0.0.0.0` 時）が表示されます
