@@ -10,5 +10,8 @@
     "build": "pnpm -C frontend build && pnpm -C server build",
     "start": "pnpm -C server start",
     "lint": "pnpm -C frontend lint && pnpm -C server lint"
+  },
+  "devDependencies": {
+    "node-gyp": "^12.2.0"
   }
 }
