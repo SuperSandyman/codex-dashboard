@@ -207,25 +207,45 @@ app.get('*', async (c) => {
   }
 });
 
-const server = http.createServer((req, res) => {
-  // Hono の fetch 型が Node の型と合わないため any を使用する。
-  const handler = (app as any).fetch;
-  handler(req, {
-    method: req.method,
-    headers: req.headers,
-    url: `http://localhost${req.url ?? '/'}`,
-  })
-    .then((r: Response) => {
-      res.statusCode = r.status;
-      r.headers.forEach((v, k) => res.setHeader(k, v));
-      return r.arrayBuffer();
-    })
-    .then((buf: ArrayBuffer) => res.end(Buffer.from(buf)))
-    .catch((error: unknown) => {
-      console.error('server request failed', { url: req.url, error });
-      res.statusCode = 500;
-      res.end('Internal Server Error');
+const toRequestHeaders = (headers: IncomingMessage['headers']): Headers => {
+  const requestHeaders = new Headers();
+  Object.entries(headers).forEach(([key, value]) => {
+    if (value === undefined) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry) => requestHeaders.append(key, entry));
+      return;
+    }
+    requestHeaders.set(key, value);
   });
+  return requestHeaders;
+};
+
+const server = http.createServer(async (req, res) => {
+  const method = req.method ?? 'GET';
+  const host = req.headers.host ?? 'localhost';
+  const requestUrl = new URL(req.url ?? '/', `http://${host}`);
+  const headers = toRequestHeaders(req.headers);
+  const body = method === 'GET' || method === 'HEAD' ? undefined : req;
+  const request = new Request(requestUrl, {
+    method,
+    headers,
+    body,
+    duplex: body ? 'half' : undefined,
+  } as RequestInit);
+
+  try {
+    const r = await app.fetch(request);
+    res.statusCode = r.status;
+    r.headers.forEach((v, k) => res.setHeader(k, v));
+    const buf = await r.arrayBuffer();
+    res.end(Buffer.from(buf));
+  } catch (error: unknown) {
+    console.error('server request failed', { url: req.url, error });
+    res.statusCode = 500;
+    res.end('Internal Server Error');
+  }
 });
 
 const wss = new WebSocketServer({ noServer: true });
