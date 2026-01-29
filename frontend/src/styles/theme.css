@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600&display=swap');
+
+:root {
+  color-scheme: dark;
+  font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+
+  --bg-0: #080a0c;
+  --bg-1: #0f1418;
+  --bg-2: #121a1f;
+  --panel: rgba(18, 24, 28, 0.86);
+  --panel-border: rgba(100, 120, 130, 0.22);
+  --panel-strong: rgba(22, 32, 36, 0.95);
+  --text-0: #f5f7f8;
+  --text-1: #c6d0d5;
+  --text-2: #7e8a93;
+  --accent: #4ee1a0;
+  --accent-strong: #2bd17e;
+  --accent-muted: rgba(78, 225, 160, 0.15);
+  --warning: #f7b955;
+  --danger: #ff6b6b;
+  --shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  --transition-fast: 180ms ease;
+  --transition-mid: 220ms ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at top left, #1a2a2f 0%, transparent 55%),
+    radial-gradient(circle at 20% 80%, #0e1b1f 0%, transparent 60%),
+    linear-gradient(135deg, var(--bg-0), #0a1115 55%, #07090b 100%);
+  color: var(--text-0);
+  letter-spacing: 0.02em;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button,
+select,
+input,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: rgba(78, 225, 160, 0.35);
+}
