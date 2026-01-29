@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { RawData, WebSocket } from 'ws';
+import { WebSocket, type RawData } from 'ws';
 
 import { LogBuffer } from './logBuffer.js';
 import { spawnPty } from './pty.js';
@@ -29,6 +29,10 @@ interface SessionManagerOptions {
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+const MIN_COLS = 1;
+const MIN_ROWS = 1;
+const MAX_COLS = 500;
+const MAX_ROWS = 500;
 
 class SessionManagerError extends Error {
   readonly code: string;
@@ -99,14 +103,7 @@ export class SessionManager {
     });
 
     pty.onExit(({ exitCode }) => {
-      entry.info = {
-        ...entry.info,
-        status: 'exited',
-        exitCode,
-        updatedAt: new Date().toISOString(),
-      };
-      this.#clearIdleTimer(entry);
-      this.#broadcast(entry, { type: 'status', status: 'exited', exitCode });
+      this.#markExited(entry, exitCode);
     });
 
     this.#setupIdleTimer(entry);
@@ -148,14 +145,7 @@ export class SessionManager {
     }
 
     if (entry.info.status === 'running') {
-      entry.pty.kill();
-      entry.info = {
-        ...entry.info,
-        status: 'exited',
-        updatedAt: new Date().toISOString(),
-      };
-      this.#clearIdleTimer(entry);
-      this.#broadcast(entry, { type: 'status', status: 'exited' });
+      this.#requestKill(entry);
     }
 
     return entry.info;
@@ -174,7 +164,15 @@ export class SessionManager {
     }
 
     entry.clients.add(ws);
-    this.#sendToClient(ws, { type: 'status', status: entry.info.status, exitCode: entry.info.exitCode });
+    const sent = this.#sendToClient(entry, ws, {
+      type: 'status',
+      status: entry.info.status,
+      exitCode: entry.info.exitCode,
+    });
+    if (!sent) {
+      ws.close(1011, 'failed to send');
+      return;
+    }
 
     ws.on('message', (raw) => {
       this.#handleClientMessage(entry, ws, raw);
@@ -203,7 +201,7 @@ export class SessionManager {
     try {
       parsed = JSON.parse(raw.toString());
     } catch {
-      this.#sendToClient(ws, {
+      this.#sendToClient(entry, ws, {
         type: 'error',
         error: { code: 'invalid_message', message: 'JSON の解析に失敗しました。' },
       });
@@ -212,7 +210,7 @@ export class SessionManager {
 
     const message = this.#parseClientMessage(parsed);
     if (!message) {
-      this.#sendToClient(ws, {
+      this.#sendToClient(entry, ws, {
         type: 'error',
         error: { code: 'invalid_message', message: '不正なメッセージ形式です。' },
       });
@@ -222,7 +220,7 @@ export class SessionManager {
     switch (message.type) {
       case 'input':
         if (entry.info.status !== 'running') {
-          this.#sendToClient(ws, {
+          this.#sendToClient(entry, ws, {
             type: 'error',
             error: { code: 'session_inactive', message: 'セッションが終了しています。' },
           });
@@ -233,9 +231,16 @@ export class SessionManager {
         break;
       case 'resize':
         if (entry.info.status !== 'running') {
-          this.#sendToClient(ws, {
+          this.#sendToClient(entry, ws, {
             type: 'error',
             error: { code: 'session_inactive', message: 'セッションが終了しています。' },
+          });
+          return;
+        }
+        if (!this.#isValidResize(message.cols, message.rows)) {
+          this.#sendToClient(entry, ws, {
+            type: 'error',
+            error: { code: 'invalid_message', message: 'cols/rows の値が不正です。' },
           });
           return;
         }
@@ -243,10 +248,10 @@ export class SessionManager {
         this.#touchSession(entry);
         break;
       case 'snapshot':
-        this.#sendToClient(ws, { type: 'snapshot', data: entry.logBuffer.snapshot() });
+        this.#sendToClient(entry, ws, { type: 'snapshot', data: entry.logBuffer.snapshot() });
         break;
       default:
-        this.#sendToClient(ws, {
+        this.#sendToClient(entry, ws, {
           type: 'error',
           error: { code: 'invalid_message', message: '不明なメッセージタイプです。' },
         });
@@ -281,12 +286,49 @@ export class SessionManager {
     return value !== null && typeof value === 'object';
   }
 
+  #isValidResize(cols: number, rows: number): boolean {
+    if (!Number.isInteger(cols) || !Number.isInteger(rows)) {
+      return false;
+    }
+    if (cols < MIN_COLS || rows < MIN_ROWS) {
+      return false;
+    }
+    if (cols > MAX_COLS || rows > MAX_ROWS) {
+      return false;
+    }
+    return true;
+  }
+
   #touchSession(entry: SessionEntry): void {
     entry.info = {
       ...entry.info,
       updatedAt: new Date().toISOString(),
     };
     this.#setupIdleTimer(entry);
+  }
+
+  #requestKill(entry: SessionEntry): void {
+    this.#clearIdleTimer(entry);
+    try {
+      entry.pty.kill();
+    } catch (error) {
+      console.error('failed to kill pty session', { sessionId: entry.info.id, error });
+    }
+  }
+
+  #markExited(entry: SessionEntry, exitCode?: number): void {
+    if (entry.info.status === 'exited') {
+      return;
+    }
+
+    entry.info = {
+      ...entry.info,
+      status: 'exited',
+      exitCode,
+      updatedAt: new Date().toISOString(),
+    };
+    this.#clearIdleTimer(entry);
+    this.#broadcast(entry, { type: 'status', status: 'exited', exitCode });
   }
 
   #setupIdleTimer(entry: SessionEntry): void {
@@ -297,13 +339,7 @@ export class SessionManager {
     this.#clearIdleTimer(entry);
     entry.idleTimer = setTimeout(() => {
       if (entry.info.status === 'running') {
-        entry.pty.kill();
-        entry.info = {
-          ...entry.info,
-          status: 'exited',
-          updatedAt: new Date().toISOString(),
-        };
-        this.#broadcast(entry, { type: 'status', status: 'exited' });
+        this.#requestKill(entry);
       }
     }, this.#idleTimeoutMs);
   }
@@ -319,12 +355,24 @@ export class SessionManager {
 
   #broadcast(entry: SessionEntry, message: SessionServerMessage): void {
     for (const client of entry.clients) {
-      this.#sendToClient(client, message);
+      this.#sendToClient(entry, client, message);
     }
   }
 
-  #sendToClient(client: WebSocket, message: SessionServerMessage): void {
-    client.send(JSON.stringify(message));
+  #sendToClient(entry: SessionEntry, client: WebSocket, message: SessionServerMessage): boolean {
+    if (client.readyState !== WebSocket.OPEN) {
+      entry.clients.delete(client);
+      return false;
+    }
+
+    try {
+      client.send(JSON.stringify(message));
+      return true;
+    } catch (error) {
+      console.error('failed to send ws message', { sessionId: entry.info.id, error });
+      entry.clients.delete(client);
+      return false;
+    }
   }
 }
 

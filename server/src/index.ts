@@ -261,7 +261,15 @@ wss.on('connection', (ws) => {
 server.on('upgrade', (req: IncomingMessage, socket, head) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname.startsWith('/ws/sessions/')) {
-    const sessionId = decodeURIComponent(url.pathname.replace('/ws/sessions/', ''));
+    let sessionId: string;
+    try {
+      sessionId = decodeURIComponent(url.pathname.replace('/ws/sessions/', ''));
+    } catch (error) {
+      console.error('invalid session id in ws url', { url: req.url, error });
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     if (!sessionManager || !sessionManager.has(sessionId)) {
       socket.write('HTTP/1.1 404 Not Found\\r\\n\\r\\n');
       socket.destroy();
