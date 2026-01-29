@@ -8,11 +8,15 @@ interface EnvConfig {
   readonly bindHost: string;
   readonly workspaceRoot: string | null;
   readonly skillsDir: string | null;
+  readonly ptyLogBufferSize: number;
+  readonly ptyIdleTimeoutMs: number;
   readonly envPath: string | null;
 }
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_BIND_HOST = '127.0.0.1';
+const DEFAULT_PTY_LOG_BUFFER_SIZE = 20000;
+const DEFAULT_PTY_IDLE_TIMEOUT_MS = 0;
 
 const resolveEnvPath = (): string | null => {
   const candidates = [
@@ -51,6 +55,25 @@ const parseBindHost = (rawValue: string | undefined, errors: string[]): string =
   return bindHost;
 };
 
+const parseNonNegativeNumber = (
+  key: string,
+  rawValue: string | undefined,
+  fallback: number,
+  errors: string[],
+): number => {
+  if (rawValue === undefined) {
+    return fallback;
+  }
+
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value < 0) {
+    errors.push(`${key} は 0 以上の数値で指定してください。`);
+    return fallback;
+  }
+
+  return value;
+};
+
 const parseAbsolutePath = (
   key: 'WORKSPACE_ROOT' | 'SKILLS_DIR',
   rawValue: string | undefined,
@@ -83,6 +106,18 @@ export const loadEnvConfig = (): EnvConfig => {
   const bindHost = parseBindHost(process.env.BIND_HOST, errors);
   const workspaceRoot = parseAbsolutePath('WORKSPACE_ROOT', process.env.WORKSPACE_ROOT, errors);
   const skillsDir = parseAbsolutePath('SKILLS_DIR', process.env.SKILLS_DIR, errors);
+  const ptyLogBufferSize = parseNonNegativeNumber(
+    'PTY_LOG_BUFFER_SIZE',
+    process.env.PTY_LOG_BUFFER_SIZE,
+    DEFAULT_PTY_LOG_BUFFER_SIZE,
+    errors,
+  );
+  const ptyIdleTimeoutMs = parseNonNegativeNumber(
+    'PTY_IDLE_TIMEOUT_MS',
+    process.env.PTY_IDLE_TIMEOUT_MS,
+    DEFAULT_PTY_IDLE_TIMEOUT_MS,
+    errors,
+  );
 
   if (errors.length > 0) {
     throw new Error([
@@ -96,6 +131,8 @@ export const loadEnvConfig = (): EnvConfig => {
     bindHost,
     workspaceRoot,
     skillsDir,
+    ptyLogBufferSize,
+    ptyIdleTimeoutMs,
     envPath,
   };
 };
