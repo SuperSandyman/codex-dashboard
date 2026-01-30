@@ -33,6 +33,7 @@ const App = () => {
   const [selectedTool, setSelectedTool] = useState<SessionTool>('codex');
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const sendRef = useRef<(value: string) => void>(() => {});
 
   const selectedSession = useMemo(() => {
@@ -119,7 +120,7 @@ const App = () => {
   }, []);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${isMenuOpen ? ' menu-open' : ''}`}>
       <header className="app-header">
         <div className="brand">
           <div className="brand-mark" />
@@ -129,6 +130,13 @@ const App = () => {
           </div>
         </div>
         <div className="header-actions">
+          <button
+            className="button button-secondary menu-toggle"
+            type="button"
+            onClick={() => setIsMenuOpen((prev) => !prev)}
+          >
+            Menu
+          </button>
           <select
             className="select"
             value={selectedTool}
@@ -161,12 +169,19 @@ const App = () => {
       </header>
 
       <main className="app-body">
+        <div
+          className={`sidebar-backdrop${isMenuOpen ? ' visible' : ''}`}
+          onClick={() => setIsMenuOpen(false)}
+        />
         <aside className="sidebar">
           <div className="section-title">Sessions</div>
           <SessionList
             sessions={sessions}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setIsMenuOpen(false);
+            }}
             onKill={handleKill}
           />
         </aside>
