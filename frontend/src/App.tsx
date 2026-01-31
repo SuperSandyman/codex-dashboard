@@ -91,18 +91,27 @@ const App = () => {
     setSessions((prev) => sortSessions(updateSessionList(prev, result.data.session)));
   };
 
-  const handleStatusUpdate = (status: SessionStatus, exitCode?: number) => {
-    if (!selectedSession) {
-      return;
-    }
-    const updated: SessionInfo = {
-      ...selectedSession,
-      status,
-      exitCode,
-      updatedAt: new Date().toISOString(),
-    };
-    setSessions((prev) => sortSessions(updateSessionList(prev, updated)));
-  };
+  const handleStatusUpdate = useCallback(
+    (status: SessionStatus, exitCode?: number) => {
+      if (!selectedId) {
+        return;
+      }
+      setSessions((prev) => {
+        const target = prev.find((session) => session.id === selectedId);
+        if (!target) {
+          return prev;
+        }
+        const updated: SessionInfo = {
+          ...target,
+          status,
+          exitCode,
+          updatedAt: new Date().toISOString(),
+        };
+        return sortSessions(updateSessionList(prev, updated));
+      });
+    },
+    [selectedId],
+  );
 
   const handleCommandSend = useCallback(
     (value: string) => {
