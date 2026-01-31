@@ -163,6 +163,7 @@ export class SessionManager {
       return;
     }
 
+    console.log('ws session attached', { sessionId: entry.info.id });
     entry.clients.add(ws);
     const sent = this.#sendToClient(entry, ws, {
       type: 'status',
@@ -178,8 +179,17 @@ export class SessionManager {
       this.#handleClientMessage(entry, ws, raw);
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reason) => {
       entry.clients.delete(ws);
+      console.log('ws session closed', {
+        sessionId: entry.info.id,
+        code,
+        reason: reason.toString(),
+      });
+    });
+
+    ws.on('error', (error) => {
+      console.error('ws session error', { sessionId: entry.info.id, error });
     });
   }
 

@@ -2,6 +2,7 @@ import * as http from 'node:http';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { IncomingMessage } from 'node:http';
+import type { Socket } from 'node:net';
 
 import { Hono } from 'hono';
 import { WebSocketServer } from 'ws';
@@ -258,21 +259,28 @@ wss.on('connection', (ws) => {
   });
 });
 
+const sendUpgradeError = (socket: Socket, statusCode: number, statusMessage: string): void => {
+  const response = `HTTP/1.1 ${statusCode} ${statusMessage}\r\nConnection: close\r\n\r\n`;
+  socket.write(response);
+  socket.end();
+};
+
 server.on('upgrade', (req: IncomingMessage, socket, head) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
+  console.log('ws upgrade request', { url: req.url, pathname: url.pathname });
   if (url.pathname.startsWith('/ws/sessions/')) {
     let sessionId: string;
     try {
       sessionId = decodeURIComponent(url.pathname.replace('/ws/sessions/', ''));
     } catch (error) {
       console.error('invalid session id in ws url', { url: req.url, error });
-      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
-      socket.destroy();
+      console.error('ws upgrade rejected', { url: req.url, reason: 'invalid_session_id' });
+      sendUpgradeError(socket, 400, 'Bad Request');
       return;
     }
     if (!sessionManager || !sessionManager.has(sessionId)) {
-      socket.write('HTTP/1.1 404 Not Found\\r\\n\\r\\n');
-      socket.destroy();
+      console.error('ws upgrade rejected', { url: req.url, reason: 'session_not_found', sessionId });
+      sendUpgradeError(socket, 404, 'Not Found');
       return;
     }
 
@@ -285,7 +293,8 @@ server.on('upgrade', (req: IncomingMessage, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     return;
   }
-  socket.destroy();
+  console.error('ws upgrade rejected', { url: req.url, reason: 'unknown_path' });
+  sendUpgradeError(socket, 404, 'Not Found');
 });
 
 const { port, bindHost, envPath } = envConfig;
