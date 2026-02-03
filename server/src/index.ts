@@ -1,16 +1,67 @@
-import * as http from 'node:http';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
+import * as http from 'node:http';
 import type { IncomingMessage } from 'node:http';
-import type { Socket } from 'node:net';
+import * as path from 'node:path';
 
 import { Hono } from 'hono';
 import { WebSocketServer } from 'ws';
 
+import { AppServerChatBridge, ChatBridgeError } from './appServer/chatBridge.js';
 import { loadEnvConfig } from './config/env.js';
-import { SessionManager, isAllowedSessionTool } from './sessions/SessionManager.js';
-import type { ApiError, CreateSessionRequest } from './sessions/types.js';
 import { listLanIpv4Addresses } from './utils/network.js';
+
+interface ApiError {
+  readonly code: string;
+  readonly message: string;
+}
+
+interface SendMessageRequestBody {
+  readonly text: string;
+}
+
+interface InterruptRequestBody {
+  readonly turnId?: string | null;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === 'object';
+};
+
+const toErrorResponse = (code: string, message: string): { error: ApiError } => {
+  return { error: { code, message } };
+};
+
+const parseSendMessageBody = (value: unknown): SendMessageRequestBody | ApiError => {
+  if (!isRecord(value) || typeof value.text !== 'string') {
+    return { code: 'invalid_payload', message: 'text を含む JSON が必要です。' };
+  }
+  const text = value.text.trim();
+  if (text.length === 0) {
+    return { code: 'invalid_payload', message: 'text は空にできません。' };
+  }
+  return { text };
+};
+
+const parseInterruptBody = (value: unknown): InterruptRequestBody | ApiError => {
+  if (value === null || value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'JSON オブジェクトで指定してください。' };
+  }
+  if (value.turnId !== undefined && value.turnId !== null && typeof value.turnId !== 'string') {
+    return { code: 'invalid_payload', message: 'turnId は string で指定してください。' };
+  }
+  return { turnId: value.turnId ?? null };
+};
+
+const respondBridgeError = (error: unknown): Response => {
+  if (error instanceof ChatBridgeError) {
+    return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
+  }
+  const message = error instanceof Error ? error.message : '不明なエラーが発生しました。';
+  return Response.json(toErrorResponse('internal_error', message), { status: 500 });
+};
 
 const envConfig = (() => {
   try {
@@ -23,6 +74,13 @@ const envConfig = (() => {
 })();
 
 const app = new Hono();
+const chatBridge = new AppServerChatBridge({
+  command: envConfig.appServerCommand,
+  args: envConfig.appServerArgs,
+  cwd: envConfig.appServerCwd,
+  defaultThreadCwd: envConfig.workspaceRoot,
+  requestTimeoutMs: envConfig.appServerRequestTimeoutMs,
+});
 
 const distRoot = path.resolve(process.cwd(), '..', 'frontend', 'dist');
 const distRootWithSep = distRoot.endsWith(path.sep) ? distRoot : `${distRoot}${path.sep}`;
@@ -73,90 +131,86 @@ const resolveContentType = (targetPath: string): string => {
 
 app.get('/api/health', (c) => c.json({ ok: true }));
 
-app.onError((error, c) => {
-  console.error('request handler error', error);
-  return c.text('Internal Server Error', 500);
-});
-
-const sessionManager = (() => {
-  if (!envConfig.workspaceRoot) {
-    return null;
-  }
-
-  return new SessionManager({
-    workspaceRoot: envConfig.workspaceRoot,
-    logBufferSize: envConfig.ptyLogBufferSize,
-    idleTimeoutMs: envConfig.ptyIdleTimeoutMs,
-  });
-})();
-
-const toErrorResponse = (code: string, message: string): { error: ApiError } => {
-  return { error: { code, message } };
-};
-
-const parseCreateSessionRequest = (body: unknown): CreateSessionRequest | ApiError => {
-  if (!body || typeof body !== 'object') {
-    return { code: 'invalid_payload', message: 'リクエストボディが不正です。' };
-  }
-
-  const record = body as Record<string, unknown>;
-  if (typeof record.tool !== 'string' || !isAllowedSessionTool(record.tool)) {
-    return { code: 'invalid_tool', message: 'tool が不正です。' };
-  }
-
-  const workspaceId = typeof record.workspaceId === 'string' ? record.workspaceId : null;
-
-  return { tool: record.tool, workspaceId };
-};
-
-app.get('/api/sessions', (c) => {
-  if (!sessionManager) {
-    return c.json(toErrorResponse('workspace_not_configured', 'WORKSPACE_ROOT が未設定です。'), 500);
-  }
-
-  return c.json({ sessions: sessionManager.list() });
-});
-
-app.post('/api/sessions', async (c) => {
-  if (!sessionManager) {
-    return c.json(toErrorResponse('workspace_not_configured', 'WORKSPACE_ROOT が未設定です。'), 500);
-  }
-
-  let body: unknown;
+app.get('/api/chats', async (c) => {
   try {
-    body = await c.req.json();
+    const chats = await chatBridge.listChats();
+    return c.json({ chats });
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.post('/api/chats', async (c) => {
+  try {
+    const chat = await chatBridge.createChat();
+    return c.json({ chat }, 201);
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.get('/api/chats/:id', async (c) => {
+  try {
+    const chat = await chatBridge.getChat(c.req.param('id'));
+    return c.json(chat);
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.post('/api/chats/:id/messages', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
   } catch {
     return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
   }
 
-  const request = parseCreateSessionRequest(body);
-  if ('code' in request) {
-    return c.json(toErrorResponse(request.code, request.message), 400);
+  const parsed = parseSendMessageBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
   }
 
   try {
-    const session = sessionManager.create(request);
-    return c.json({ session }, 201);
+    const result = await chatBridge.sendMessage(c.req.param('id'), parsed.text);
+    return c.json(result, 202);
   } catch (error) {
-    const apiError = sessionManager.toApiError(error);
-    return c.json(toErrorResponse(apiError.code, apiError.message), 500);
+    return respondBridgeError(error);
   }
 });
 
-app.delete('/api/sessions/:id', (c) => {
-  if (!sessionManager) {
-    return c.json(toErrorResponse('workspace_not_configured', 'WORKSPACE_ROOT が未設定です。'), 500);
+app.post('/api/chats/:id/interrupt', async (c) => {
+  let payload: unknown = null;
+  const contentType = c.req.header('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    try {
+      payload = await c.req.json();
+    } catch {
+      return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+    }
   }
 
-  const id = c.req.param('id');
-  try {
-    const session = sessionManager.kill(id);
-    return c.json({ session });
-  } catch (error) {
-    const apiError = sessionManager.toApiError(error);
-    const status = apiError.code === 'session_not_found' ? 404 : 500;
-    return c.json(toErrorResponse(apiError.code, apiError.message), status);
+  const parsed = parseInterruptBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
   }
+
+  try {
+    const result = await chatBridge.interruptTurn(c.req.param('id'), parsed.turnId ?? null);
+    return c.json({
+      interrupted: true,
+      turnId: result.turnId,
+    });
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.onError((error) => {
+  console.error('request handler error', error);
+  return Response.json(toErrorResponse('internal_error', 'Internal Server Error'), {
+    status: 500,
+  });
 });
 
 app.get('*', async (c) => {
@@ -195,7 +249,6 @@ app.get('*', async (c) => {
     const content = await fs.readFile(safePath);
     return c.body(content, 200, headerRecord);
   } catch {
-    // SPA のために index.html をフォールバックする
     const indexPath = path.join(distRoot, 'index.html');
     try {
       const indexContent = await fs.readFile(indexPath);
@@ -237,11 +290,11 @@ const server = http.createServer(async (req, res) => {
   } as RequestInit);
 
   try {
-    const r = await app.fetch(request);
-    res.statusCode = r.status;
-    r.headers.forEach((v, k) => res.setHeader(k, v));
-    const buf = await r.arrayBuffer();
-    res.end(Buffer.from(buf));
+    const response = await app.fetch(request);
+    res.statusCode = response.status;
+    response.headers.forEach((value, key) => res.setHeader(key, value));
+    const buffer = await response.arrayBuffer();
+    res.end(Buffer.from(buffer));
   } catch (error: unknown) {
     console.error('server request failed', { url: req.url, error });
     res.statusCode = 500;
@@ -249,52 +302,27 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const wss = new WebSocketServer({ noServer: true });
-const sessionWss = new WebSocketServer({ noServer: true });
-
-wss.on('connection', (ws) => {
-  ws.send(JSON.stringify({ type: 'hello', message: 'ws connected' }));
-  ws.on('message', (data) => {
-    ws.send(data.toString());
-  });
-});
-
-const sendUpgradeError = (socket: Socket, statusCode: number, statusMessage: string): void => {
-  const response = `HTTP/1.1 ${statusCode} ${statusMessage}\r\nConnection: close\r\n\r\n`;
-  socket.write(response);
-  socket.end();
-};
+const chatWss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req: IncomingMessage, socket, head) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
-  console.log('ws upgrade request', { url: req.url, pathname: url.pathname });
-  if (url.pathname.startsWith('/ws/sessions/')) {
-    let sessionId: string;
+  if (url.pathname.startsWith('/ws/chats/')) {
+    let threadId: string;
     try {
-      sessionId = decodeURIComponent(url.pathname.replace('/ws/sessions/', ''));
-    } catch (error) {
-      console.error('invalid session id in ws url', { url: req.url, error });
-      console.error('ws upgrade rejected', { url: req.url, reason: 'invalid_session_id' });
-      sendUpgradeError(socket, 400, 'Bad Request');
-      return;
-    }
-    if (!sessionManager || !sessionManager.has(sessionId)) {
-      console.error('ws upgrade rejected', { url: req.url, reason: 'session_not_found', sessionId });
-      sendUpgradeError(socket, 404, 'Not Found');
+      threadId = decodeURIComponent(url.pathname.replace('/ws/chats/', ''));
+    } catch {
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
       return;
     }
 
-    sessionWss.handleUpgrade(req, socket, head, (ws) => {
-      sessionManager.attachWebSocket(sessionId, ws);
+    chatWss.handleUpgrade(req, socket, head, (ws) => {
+      chatBridge.attachWebSocket(threadId, ws);
     });
     return;
   }
-  if (url.pathname === '/ws') {
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-    return;
-  }
-  console.error('ws upgrade rejected', { url: req.url, reason: 'unknown_path' });
-  sendUpgradeError(socket, 404, 'Not Found');
+
+  socket.destroy();
 });
 
 const { port, bindHost, envPath } = envConfig;
@@ -320,3 +348,11 @@ server.listen(port, bindHost, () => {
     }
   }
 });
+
+const shutdown = (): void => {
+  chatBridge.dispose();
+  server.close();
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

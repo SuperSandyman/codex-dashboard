@@ -7,16 +7,18 @@ interface EnvConfig {
   readonly port: number;
   readonly bindHost: string;
   readonly workspaceRoot: string | null;
-  readonly skillsDir: string | null;
-  readonly ptyLogBufferSize: number;
-  readonly ptyIdleTimeoutMs: number;
+  readonly appServerCommand: string;
+  readonly appServerArgs: readonly string[];
+  readonly appServerCwd: string | null;
+  readonly appServerRequestTimeoutMs: number;
   readonly envPath: string | null;
 }
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_BIND_HOST = '127.0.0.1';
-const DEFAULT_PTY_LOG_BUFFER_SIZE = 20000;
-const DEFAULT_PTY_IDLE_TIMEOUT_MS = 0;
+const DEFAULT_APP_SERVER_COMMAND = 'codex';
+const DEFAULT_APP_SERVER_ARGS = ['app-server'];
+const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 120000;
 
 const resolveEnvPath = (): string | null => {
   const candidates = [
@@ -55,7 +57,7 @@ const parseBindHost = (rawValue: string | undefined, errors: string[]): string =
   return bindHost;
 };
 
-const parseNonNegativeNumber = (
+const parsePositiveNumber = (
   key: string,
   rawValue: string | undefined,
   fallback: number,
@@ -66,8 +68,8 @@ const parseNonNegativeNumber = (
   }
 
   const value = Number(rawValue);
-  if (!Number.isFinite(value) || value < 0) {
-    errors.push(`${key} は 0 以上の数値で指定してください。`);
+  if (!Number.isFinite(value) || value <= 0) {
+    errors.push(`${key} は 1 以上の数値で指定してください。`);
     return fallback;
   }
 
@@ -75,7 +77,7 @@ const parseNonNegativeNumber = (
 };
 
 const parseAbsolutePath = (
-  key: 'WORKSPACE_ROOT' | 'SKILLS_DIR',
+  key: string,
   rawValue: string | undefined,
   errors: string[],
 ): string | null => {
@@ -88,6 +90,31 @@ const parseAbsolutePath = (
   }
 
   return rawValue;
+};
+
+const parseAppServerCommand = (rawValue: string | undefined, errors: string[]): string => {
+  const value = rawValue?.trim() ?? DEFAULT_APP_SERVER_COMMAND;
+  if (value.length === 0) {
+    errors.push('APP_SERVER_COMMAND は空文字にできません。');
+  }
+  return value;
+};
+
+const parseAppServerArgs = (rawValue: string | undefined, errors: string[]): string[] => {
+  if (rawValue === undefined || rawValue.trim().length === 0) {
+    return [...DEFAULT_APP_SERVER_ARGS];
+  }
+  const args = rawValue
+    .split(/\s+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (args.length === 0) {
+    errors.push('APP_SERVER_ARGS は 1 つ以上の引数を指定してください。');
+    return [...DEFAULT_APP_SERVER_ARGS];
+  }
+
+  return args;
 };
 
 /**
@@ -105,17 +132,13 @@ export const loadEnvConfig = (): EnvConfig => {
   const port = parsePort(process.env.PORT, errors);
   const bindHost = parseBindHost(process.env.BIND_HOST, errors);
   const workspaceRoot = parseAbsolutePath('WORKSPACE_ROOT', process.env.WORKSPACE_ROOT, errors);
-  const skillsDir = parseAbsolutePath('SKILLS_DIR', process.env.SKILLS_DIR, errors);
-  const ptyLogBufferSize = parseNonNegativeNumber(
-    'PTY_LOG_BUFFER_SIZE',
-    process.env.PTY_LOG_BUFFER_SIZE,
-    DEFAULT_PTY_LOG_BUFFER_SIZE,
-    errors,
-  );
-  const ptyIdleTimeoutMs = parseNonNegativeNumber(
-    'PTY_IDLE_TIMEOUT_MS',
-    process.env.PTY_IDLE_TIMEOUT_MS,
-    DEFAULT_PTY_IDLE_TIMEOUT_MS,
+  const appServerCommand = parseAppServerCommand(process.env.APP_SERVER_COMMAND, errors);
+  const appServerArgs = parseAppServerArgs(process.env.APP_SERVER_ARGS, errors);
+  const appServerCwd = parseAbsolutePath('APP_SERVER_CWD', process.env.APP_SERVER_CWD, errors);
+  const appServerRequestTimeoutMs = parsePositiveNumber(
+    'APP_SERVER_REQUEST_TIMEOUT_MS',
+    process.env.APP_SERVER_REQUEST_TIMEOUT_MS,
+    DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS,
     errors,
   );
 
@@ -130,9 +153,10 @@ export const loadEnvConfig = (): EnvConfig => {
     port,
     bindHost,
     workspaceRoot,
-    skillsDir,
-    ptyLogBufferSize,
-    ptyIdleTimeoutMs,
+    appServerCommand,
+    appServerArgs,
+    appServerCwd,
+    appServerRequestTimeoutMs,
     envPath,
   };
 };
