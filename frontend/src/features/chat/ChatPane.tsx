@@ -1,0 +1,115 @@
+import { useEffect, useRef, useState } from 'react';
+
+import type { ChatMessage } from '../../api/chats';
+
+interface ChatPaneProps {
+  readonly chatId: string | null;
+  readonly messages: readonly ChatMessage[];
+  readonly activeTurnId: string | null;
+  readonly isLoading: boolean;
+  readonly isSending: boolean;
+  readonly onSend: (text: string) => void;
+  readonly onStop: () => void;
+}
+
+const getMessageTitle = (message: ChatMessage): string => {
+  if (message.role === 'tool') {
+    return 'Tool';
+  }
+  if (message.role === 'assistant') {
+    return 'Assistant';
+  }
+  if (message.role === 'system') {
+    return 'System';
+  }
+  return 'You';
+};
+
+/**
+ * チャット履歴表示と Composer を提供する。
+ * @param props ChatPane プロパティ
+ */
+export const ChatPane = ({
+  chatId,
+  messages,
+  activeTurnId,
+  isLoading,
+  isSending,
+  onSend,
+  onStop,
+}: ChatPaneProps) => {
+  const [draft, setDraft] = useState('');
+  const messageEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages.length, activeTurnId]);
+
+  const canSend = Boolean(chatId) && !isLoading && !isSending && !activeTurnId;
+  const canStop = Boolean(chatId) && Boolean(activeTurnId);
+
+  const handleSend = () => {
+    const text = draft.trim();
+    if (!text) {
+      return;
+    }
+    onSend(text);
+    setDraft('');
+  };
+
+  return (
+    <div className="chat-card">
+      <div className="chat-header">
+        <div className="chat-title">Chat</div>
+        <div className="chat-status">
+          {activeTurnId ? <span className="status-dot active" /> : <span className="status-dot" />}
+          {activeTurnId ? 'Streaming' : 'Idle'}
+        </div>
+      </div>
+
+      <div className="chat-messages">
+        {!chatId ? (
+          <div className="chat-empty">Select or create a chat to start.</div>
+        ) : null}
+        {chatId && messages.length === 0 && !isLoading ? (
+          <div className="chat-empty">No messages yet. Send your first prompt.</div>
+        ) : null}
+        {messages.map((message) => (
+          <article key={message.id} className={`chat-message role-${message.role}`}>
+            <header className="chat-message-header">
+              <span>{getMessageTitle(message)}</span>
+              <span className="chat-message-kind">{message.kind}</span>
+            </header>
+            <pre className="chat-message-content">{message.text || ' '}</pre>
+            {message.status ? <div className="chat-message-status">{message.status}</div> : null}
+          </article>
+        ))}
+        <div ref={messageEndRef} />
+      </div>
+
+      <div className="chat-composer">
+        <textarea
+          className="chat-input"
+          placeholder="Type your prompt..."
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              handleSend();
+            }
+          }}
+          disabled={!chatId || isLoading}
+        />
+        <div className="chat-actions">
+          <button className="button button-secondary" type="button" onClick={onStop} disabled={!canStop}>
+            Stop
+          </button>
+          <button className="button button-primary" type="button" onClick={handleSend} disabled={!canSend}>
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
