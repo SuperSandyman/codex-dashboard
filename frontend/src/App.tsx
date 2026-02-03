@@ -147,16 +147,49 @@ const App = () => {
   );
 
   useEffect(() => {
-    refreshChats();
+    let isCancelled = false;
+    void (async () => {
+      await Promise.resolve();
+      if (isCancelled) {
+        return;
+      }
+      await refreshChats();
+    })();
+    return () => {
+      isCancelled = true;
+    };
   }, [refreshChats]);
 
   useEffect(() => {
+    let isCancelled = false;
+    let timer: number | null = null;
     if (!selectedChatId) {
-      setMessages([]);
-      setActiveTurnId(null);
-      return;
+      timer = window.setTimeout(() => {
+        if (isCancelled) {
+          return;
+        }
+        setMessages([]);
+        setActiveTurnId(null);
+      }, 0);
+      return () => {
+        isCancelled = true;
+        if (timer !== null) {
+          window.clearTimeout(timer);
+        }
+      };
     }
-    loadChatDetail(selectedChatId);
+    timer = window.setTimeout(() => {
+      if (isCancelled) {
+        return;
+      }
+      void loadChatDetail(selectedChatId);
+    }, 0);
+    return () => {
+      isCancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [loadChatDetail, selectedChatId]);
 
   useEffect(() => {
@@ -240,8 +273,7 @@ const App = () => {
         <div className="brand">
           <div className="brand-mark" />
           <div>
-            <div className="brand-title">Chat Lens</div>
-            <div className="brand-subtitle">Codex Dashboard</div>
+            <div className="brand-title">Codex Dashboard</div>
           </div>
         </div>
         <div className="header-actions">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { ChatMessage } from '../../api/chats';
+import { MarkdownBlock } from './MarkdownBlock';
 
 interface ChatPaneProps {
   readonly chatId: string | null;
@@ -23,6 +24,10 @@ const getMessageTitle = (message: ChatMessage): string => {
     return 'System';
   }
   return 'You';
+};
+
+const isReasoningMessage = (message: ChatMessage): boolean => {
+  return message.kind === 'reasoning';
 };
 
 /**
@@ -80,7 +85,14 @@ export const ChatPane = ({
               <span>{getMessageTitle(message)}</span>
               <span className="chat-message-kind">{message.kind}</span>
             </header>
-            <pre className="chat-message-content">{message.text || ' '}</pre>
+            {isReasoningMessage(message) ? (
+              <details className="reasoning-details">
+                <summary className="reasoning-summary">Reasoning (click to expand)</summary>
+                <MarkdownBlock text={message.text || ' '} />
+              </details>
+            ) : (
+              <MarkdownBlock text={message.text || ' '} />
+            )}
             {message.status ? <div className="chat-message-status">{message.status}</div> : null}
           </article>
         ))}
