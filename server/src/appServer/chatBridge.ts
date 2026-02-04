@@ -66,11 +66,6 @@ const DEFAULT_PAGE_LIMIT = 100;
 const MAX_PAGE_ROUNDS = 20;
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 const WORKSPACE_DIR_LIMIT = 80;
-const EMPTY_LAUNCH_OPTIONS: ChatLaunchOptions = {
-  model: null,
-  effort: null,
-  cwd: null,
-};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
@@ -164,9 +159,10 @@ export class AppServerChatBridge {
       [...activeChats, ...archivedChats].forEach((chat) => {
         mergedById.set(chat.id, chat);
       });
-      return [...mergedById.values()]
-        .map((chat) => this.#withLaunchOptions(chat))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const chats = await Promise.all(
+        [...mergedById.values()].map((chat) => this.#withLaunchOptions(chat)),
+      );
+      return chats.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     } catch (error) {
       throw this.#mapBridgeError(error, 'chat_list_failed', 'チャット一覧の取得に失敗しました。');
     }
@@ -223,7 +219,7 @@ export class AppServerChatBridge {
       }
       const summary = toChatSummary(parsed.thread);
       this.#launchOptionsByThread.set(summary.id, appliedLaunchOptions);
-      return this.#withLaunchOptions(summary);
+      return await this.#withLaunchOptions(summary);
     } catch (error) {
       throw this.#mapBridgeError(error, 'chat_create_failed', 'チャット作成に失敗しました。');
     }
@@ -241,6 +237,10 @@ export class AppServerChatBridge {
         throw new ChatBridgeError('invalid_response', 502, 'thread/read の応答が不正です。');
       }
       const detail = toChatDetail(parsed.thread);
+      const launchOptions = await this.#resolveLaunchOptionsForThread(
+        detail.chat.id,
+        detail.chat.launchOptions,
+      );
       if (detail.activeTurnId) {
         this.#activeTurnByThread.set(threadId, detail.activeTurnId);
       } else {
@@ -248,7 +248,10 @@ export class AppServerChatBridge {
       }
       return {
         ...detail,
-        chat: this.#withLaunchOptions(detail.chat),
+        chat: {
+          ...detail.chat,
+          launchOptions,
+        },
       };
     } catch (error) {
       throw this.#mapBridgeError(error, 'chat_get_failed', 'チャット履歴の取得に失敗しました。');
@@ -265,7 +268,7 @@ export class AppServerChatBridge {
     input: UpdateChatLaunchOptionsInput,
   ): Promise<ChatLaunchOptions> {
     try {
-      const current = this.#launchOptionsByThread.get(threadId) ?? EMPTY_LAUNCH_OPTIONS;
+      const current = await this.#getOrRestoreLaunchOptions(threadId);
       const next = await this.#validateModelAndEffort({
         model: input.model,
         effort: input.effort,
@@ -285,11 +288,7 @@ export class AppServerChatBridge {
    */
   async sendMessage(threadId: string, text: string): Promise<{ readonly turnId: string }> {
     try {
-      const launchOptions = this.#launchOptionsByThread.get(threadId) ?? {
-        model: null,
-        effort: null,
-        cwd: this.#defaultThreadCwd,
-      };
+      const launchOptions = await this.#getOrRestoreLaunchOptions(threadId);
       const result = await this.#startTurnWithAutoResume(threadId, text, launchOptions);
       const parsed = parseTurnStartResult(result);
       if (!parsed) {
@@ -381,16 +380,74 @@ export class AppServerChatBridge {
     return chats;
   }
 
-  #withLaunchOptions(chat: ChatSummary): ChatSummary {
-    const launchOptions = this.#launchOptionsByThread.get(chat.id) ?? EMPTY_LAUNCH_OPTIONS;
+  async #withLaunchOptions(chat: ChatSummary): Promise<ChatSummary> {
+    const launchOptions = await this.#resolveLaunchOptionsForThread(chat.id, chat.launchOptions);
     return {
       ...chat,
-      launchOptions: {
-        model: launchOptions.model,
-        effort: launchOptions.effort,
-        cwd: launchOptions.cwd,
-      },
+      launchOptions,
     };
+  }
+
+  async #getOrRestoreLaunchOptions(threadId: string): Promise<ChatLaunchOptions> {
+    const existing = this.#launchOptionsByThread.get(threadId);
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const result = await this.#readThreadWithAutoResume(threadId);
+      const parsed = parseThreadReadResult(result);
+      if (parsed) {
+        const summary = toChatSummary(parsed.thread);
+        return await this.#resolveLaunchOptionsForThread(threadId, summary.launchOptions);
+      }
+    } catch {
+      // fall back to defaults when thread metadata restore is unavailable
+    }
+
+    const fallback: ChatLaunchOptions = {
+      model: null,
+      effort: null,
+      cwd: this.#defaultThreadCwd,
+    };
+    this.#launchOptionsByThread.set(threadId, fallback);
+    return fallback;
+  }
+
+  async #resolveLaunchOptionsForThread(
+    threadId: string,
+    fallback: ChatLaunchOptions,
+  ): Promise<ChatLaunchOptions> {
+    const existing = this.#launchOptionsByThread.get(threadId);
+    if (existing) {
+      return existing;
+    }
+
+    const resolvedCwd = await this.#restoreCwdOrDefault(fallback.cwd);
+    const launchOptions: ChatLaunchOptions = {
+      model: fallback.model,
+      effort: fallback.effort,
+      cwd: resolvedCwd,
+    };
+    this.#launchOptionsByThread.set(threadId, launchOptions);
+    return launchOptions;
+  }
+
+  async #restoreCwdOrDefault(candidateCwd: string | null): Promise<string | null> {
+    if (!candidateCwd || !path.isAbsolute(candidateCwd)) {
+      return this.#defaultThreadCwd;
+    }
+
+    const resolved = path.resolve(candidateCwd);
+    try {
+      const stat = await fs.stat(resolved);
+      if (!stat.isDirectory()) {
+        return this.#defaultThreadCwd;
+      }
+      return await fs.realpath(resolved);
+    } catch {
+      return this.#defaultThreadCwd;
+    }
   }
 
   async #validateCreateLaunchOptions(input: CreateChatLaunchOptionsInput): Promise<ChatLaunchOptions> {

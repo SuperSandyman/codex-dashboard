@@ -177,10 +177,17 @@ export const touchChatSummary = (
     if (chat.id !== threadId) {
       return chat;
     }
+
+    const hasFixedPreview = chat.preview.trim().length > 0 && chat.preview !== '(untitled)';
+    const nextPreview =
+      preview !== null && !hasFixedPreview
+        ? preview
+        : chat.preview;
+
     return {
       ...chat,
       updatedAt: now,
-      preview: preview ?? chat.preview,
+      preview: nextPreview,
     };
   });
   return sortChatsByUpdatedAt(next);

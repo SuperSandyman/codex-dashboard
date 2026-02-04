@@ -39,6 +39,7 @@ interface AppServerThread {
   readonly id: string;
   readonly preview: string;
   readonly modelProvider: string;
+  readonly cwd: string | null;
   readonly source: unknown;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -371,9 +372,17 @@ const parseThread = (value: unknown): AppServerThread | null => {
   const id = readString(value, 'id');
   const preview = readString(value, 'preview');
   const modelProvider = readString(value, 'modelProvider');
+  const cwd = value.cwd === null || value.cwd === undefined ? null : asString(value.cwd);
   const createdAt = readNumber(value, 'createdAt');
   const updatedAt = readNumber(value, 'updatedAt');
-  if (!id || preview === null || modelProvider === null || createdAt === null || updatedAt === null) {
+  if (
+    !id ||
+    preview === null ||
+    modelProvider === null ||
+    createdAt === null ||
+    updatedAt === null ||
+    (value.cwd !== null && value.cwd !== undefined && cwd === null)
+  ) {
     return null;
   }
 
@@ -391,6 +400,7 @@ const parseThread = (value: unknown): AppServerThread | null => {
     id,
     preview,
     modelProvider,
+    cwd,
     source: value.source,
     createdAt,
     updatedAt,
@@ -582,7 +592,7 @@ export const toChatSummary = (thread: AppServerThread): ChatSummary => {
     launchOptions: {
       model: null,
       effort: null,
-      cwd: null,
+      cwd: thread.cwd,
     },
   };
 };

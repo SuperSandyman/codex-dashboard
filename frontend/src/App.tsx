@@ -51,6 +51,14 @@ const formatRelative = (iso: string): string => {
   }).format(date);
 };
 
+const resolveModelDefault = (models: readonly ChatModelOption[]): string | null => {
+  const defaultModel = models.find((model) => model.isDefault);
+  if (defaultModel) {
+    return defaultModel.id;
+  }
+  return models[0]?.id ?? null;
+};
+
 const resolveEffortForModel = (
   models: readonly ChatModelOption[],
   modelId: string | null,
@@ -84,6 +92,7 @@ const App = () => {
   const [isUpdatingLaunchOptions, setIsUpdatingLaunchOptions] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isNewChatPanelOpen, setIsNewChatPanelOpen] = useState(false);
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [cwdChoices, setCwdChoices] = useState<string[]>([]);
@@ -144,7 +153,7 @@ const App = () => {
       const model =
         prev.model && catalog.models.some((entry) => entry.id === prev.model)
           ? prev.model
-          : null;
+          : resolveModelDefault(catalog.models);
       const effort = resolveEffortForModel(catalog.models, model, prev.effort);
       const cwd =
         prev.cwd && catalog.cwdChoices.includes(prev.cwd)
@@ -304,6 +313,7 @@ const App = () => {
     setChats((prev) => sortChatsByUpdatedAt([chat, ...prev]));
     setSelectedChatId(chat.id);
     setIsMenuOpen(false);
+    setIsNewChatPanelOpen(false);
   };
 
   const handleUpdateSelectedLaunchOptions = async (model: string | null, effort: string | null) => {
@@ -401,7 +411,7 @@ const App = () => {
           <button
             className="button button-primary"
             type="button"
-            onClick={handleCreateChat}
+            onClick={() => setIsNewChatPanelOpen((prev) => !prev)}
             disabled={isLoadingChats}
           >
             New Chat
@@ -417,98 +427,115 @@ const App = () => {
         </div>
       </header>
 
+      {isNewChatPanelOpen ? (
+        <section className="new-chat-panel">
+          <div className="section-title">New Chat Settings</div>
+          <label className="field-block">
+            <span>Model</span>
+            <select
+              className="field-input"
+              value={newChatLaunchOptions.model ?? ''}
+              disabled={isLoadingCatalog || modelOptions.length === 0}
+              onChange={(event) => {
+                const nextModel = event.target.value.length > 0 ? event.target.value : null;
+                setNewChatLaunchOptions((prev) => {
+                  const nextEffort = resolveEffortForModel(modelOptions, nextModel, prev.effort);
+                  return {
+                    ...prev,
+                    model: nextModel,
+                    effort: nextEffort,
+                  };
+                });
+              }}
+            >
+              {modelOptions.length === 0 ? <option value="">No models available</option> : null}
+              {modelOptions.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field-block">
+            <span>Effort</span>
+            <select
+              className="field-input"
+              value={newChatLaunchOptions.effort ?? ''}
+              disabled={isLoadingCatalog || !newChatLaunchOptions.model || newChatEfforts.length === 0}
+              onChange={(event) => {
+                const nextEffort = event.target.value.length > 0 ? event.target.value : null;
+                setNewChatLaunchOptions((prev) => {
+                  return {
+                    ...prev,
+                    effort: nextEffort,
+                  };
+                });
+              }}
+            >
+              <option value="">Model default</option>
+              {newChatEfforts.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field-block">
+            <span>Directory</span>
+            <select
+              className="field-input"
+              value={newChatLaunchOptions.cwd ?? ''}
+              disabled={isLoadingCatalog || workspaceRoot === null}
+              onChange={(event) => {
+                const nextCwd = event.target.value.length > 0 ? event.target.value : null;
+                setNewChatLaunchOptions((prev) => {
+                  return {
+                    ...prev,
+                    cwd: nextCwd,
+                  };
+                });
+              }}
+            >
+              <option value="">
+                {workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'}
+              </option>
+              {cwdChoices.filter((cwd) => cwd !== workspaceRoot).map((cwd) => (
+                <option key={cwd} value={cwd}>
+                  {cwd}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="new-chat-panel-actions">
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={() => setIsNewChatPanelOpen(false)}
+              disabled={isLoadingChats}
+            >
+              Cancel
+            </button>
+            <button
+              className="button button-primary"
+              type="button"
+              onClick={handleCreateChat}
+              disabled={isLoadingChats}
+            >
+              Create
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       <main className="app-body">
         <div
           className={`sidebar-backdrop${isMenuOpen ? ' visible' : ''}`}
           onClick={() => setIsMenuOpen(false)}
         />
         <aside className="sidebar">
-          <section className="launch-form">
-            <div className="section-title">New Chat</div>
-            <label className="field-block">
-              <span>Model</span>
-              <select
-                className="field-input"
-                value={newChatLaunchOptions.model ?? ''}
-                disabled={isLoadingCatalog || modelOptions.length === 0}
-                onChange={(event) => {
-                  const nextModel = event.target.value.length > 0 ? event.target.value : null;
-                  setNewChatLaunchOptions((prev) => {
-                    const nextEffort = resolveEffortForModel(modelOptions, nextModel, prev.effort);
-                    return {
-                      ...prev,
-                      model: nextModel,
-                      effort: nextEffort,
-                    };
-                  });
-                }}
-              >
-                <option value="">App default</option>
-                {modelOptions.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="field-block">
-              <span>Effort</span>
-              <select
-                className="field-input"
-                value={newChatLaunchOptions.effort ?? ''}
-                disabled={
-                  isLoadingCatalog ||
-                  !newChatLaunchOptions.model ||
-                  newChatEfforts.length === 0
-                }
-                onChange={(event) => {
-                  const nextEffort = event.target.value.length > 0 ? event.target.value : null;
-                  setNewChatLaunchOptions((prev) => {
-                    return {
-                      ...prev,
-                      effort: nextEffort,
-                    };
-                  });
-                }}
-              >
-                <option value="">Model default</option>
-                {newChatEfforts.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="field-block">
-              <span>Directory</span>
-              <select
-                className="field-input"
-                value={newChatLaunchOptions.cwd ?? ''}
-                disabled={isLoadingCatalog || workspaceRoot === null}
-                onChange={(event) => {
-                  const nextCwd = event.target.value.length > 0 ? event.target.value : null;
-                  setNewChatLaunchOptions((prev) => {
-                    return {
-                      ...prev,
-                      cwd: nextCwd,
-                    };
-                  });
-                }}
-              >
-                <option value="">
-                  {workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'}
-                </option>
-                {cwdChoices.filter((cwd) => cwd !== workspaceRoot).map((cwd) => (
-                  <option key={cwd} value={cwd}>
-                    {cwd}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </section>
-
           <div className="section-title">Chats</div>
           <div className="chat-list">
             {chats.length === 0 ? <div className="chat-list-empty">No chats yet.</div> : null}

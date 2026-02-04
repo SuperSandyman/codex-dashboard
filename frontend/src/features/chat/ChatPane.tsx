@@ -72,7 +72,8 @@ export const ChatPane = ({
 
   const selectedModel = launchOptions?.model ?? null;
   const selectedEffort = launchOptions?.effort ?? null;
-  const selectedModelOption = modelOptions.find((model) => model.id === selectedModel) ?? null;
+  const selectedModelValue = selectedModel ?? modelOptions[0]?.id ?? '';
+  const selectedModelOption = modelOptions.find((model) => model.id === selectedModelValue) ?? null;
   const effortOptions = selectedModelOption?.efforts ?? [];
 
   const handleSend = () => {
@@ -88,7 +89,6 @@ export const ChatPane = ({
     const nextModel = rawModel.length > 0 ? rawModel : null;
     const model = modelOptions.find((entry) => entry.id === nextModel) ?? null;
     if (!nextModel || !model) {
-      onUpdateLaunchOptions(null, null);
       return;
     }
 
@@ -101,7 +101,7 @@ export const ChatPane = ({
 
   const handleEffortChange = (rawEffort: string) => {
     const nextEffort = rawEffort.length > 0 ? rawEffort : null;
-    onUpdateLaunchOptions(selectedModel, nextEffort);
+    onUpdateLaunchOptions(selectedModelValue || null, nextEffort);
   };
 
   return (
@@ -120,11 +120,11 @@ export const ChatPane = ({
             <span>Model</span>
             <select
               className="chat-select"
-              value={selectedModel ?? ''}
+              value={selectedModelValue}
               disabled={!canEditLaunchOptions}
               onChange={(event) => handleModelChange(event.target.value)}
             >
-              <option value="">App default</option>
+              {modelOptions.length === 0 ? <option value="">No models available</option> : null}
               {modelOptions.map((model) => (
                 <option key={model.id} value={model.id}>
                   {model.displayName}
