@@ -326,15 +326,15 @@
 .chat-launch-settings {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(160px, 1.2fr);
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(140px, 1fr);
+  gap: 6px;
 }
 
 .chat-launch-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  font-size: 0.7rem;
+  gap: 4px;
+  font-size: 0.66rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-2);
@@ -346,8 +346,8 @@
   border: 1px solid var(--panel-border);
   background: rgba(14, 20, 24, 0.95);
   color: var(--text-0);
-  padding: 8px 9px;
-  font-size: 0.84rem;
+  padding: 6px 8px;
+  font-size: 0.8rem;
   text-transform: none;
   letter-spacing: normal;
   outline: none;
@@ -361,7 +361,7 @@
   border: 1px dashed rgba(100, 120, 130, 0.28);
   border-radius: 6px;
   background: rgba(8, 12, 14, 0.55);
-  padding: 7px 9px;
+  padding: 6px 8px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -369,14 +369,14 @@
 }
 
 .chat-cwd-display span {
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-2);
 }
 
 .chat-cwd-display strong {
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   font-weight: 500;
   color: var(--text-1);
   white-space: nowrap;
@@ -576,6 +576,31 @@
   background: rgba(10, 14, 16, 0.8);
 }
 
+.chat-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.composer-launch-settings {
+  display: none;
+  border: 1px solid rgba(100, 120, 130, 0.22);
+  border-radius: 6px;
+  padding: 8px;
+  background: rgba(8, 12, 14, 0.55);
+}
+
+.composer-launch-settings.open {
+  display: grid;
+}
+
+.chat-settings-toggle {
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 .chat-input {
   width: 100%;
   min-height: 88px;
@@ -738,6 +763,18 @@
     gap: 12px;
   }
 
+  .brand-title {
+    display: none;
+  }
+
+  .brand-mark {
+    display: none;
+  }
+
+  .brand {
+    gap: 0;
+  }
+
   .header-actions {
     width: 100%;
     flex-wrap: wrap;
@@ -749,6 +786,20 @@
   }
 
   .chat-launch-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-composer-row {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .chat-settings-toggle {
+    width: auto;
+  }
+
+  .composer-launch-settings.open {
+    display: grid;
     grid-template-columns: 1fr;
   }
 

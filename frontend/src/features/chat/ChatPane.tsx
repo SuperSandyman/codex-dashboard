@@ -59,6 +59,7 @@ export const ChatPane = ({
   onUpdateLaunchOptions,
 }: ChatPaneProps) => {
   const [draft, setDraft] = useState('');
+  const [isComposerSettingsOpen, setIsComposerSettingsOpen] = useState(false);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -114,47 +115,6 @@ export const ChatPane = ({
             {activeTurnId ? 'Streaming' : 'Idle'}
           </div>
         </div>
-
-        <div className="chat-launch-settings">
-          <label className="chat-launch-field">
-            <span>Model</span>
-            <select
-              className="chat-select"
-              value={selectedModelValue}
-              disabled={!canEditLaunchOptions}
-              onChange={(event) => handleModelChange(event.target.value)}
-            >
-              {modelOptions.length === 0 ? <option value="">No models available</option> : null}
-              {modelOptions.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="chat-launch-field">
-            <span>Effort</span>
-            <select
-              className="chat-select"
-              value={selectedEffort ?? ''}
-              disabled={!canEditLaunchOptions || !selectedModelOption}
-              onChange={(event) => handleEffortChange(event.target.value)}
-            >
-              <option value="">Model default</option>
-              {effortOptions.map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="chat-cwd-display" title={launchOptions?.cwd ?? 'workspace default'}>
-            <span>CWD</span>
-            <strong>{launchOptions?.cwd ?? 'Workspace default'}</strong>
-          </div>
-        </div>
       </div>
 
       <div className="chat-messages">
@@ -198,13 +158,67 @@ export const ChatPane = ({
           }}
           disabled={!chatId || isLoading}
         />
-        <div className="chat-actions">
-          <button className="button button-secondary" type="button" onClick={onStop} disabled={!canStop}>
-            Stop
+        <div className="chat-composer-row">
+          <div className="chat-actions">
+            <button className="button button-secondary" type="button" onClick={onStop} disabled={!canStop}>
+              Stop
+            </button>
+            <button className="button button-primary" type="button" onClick={handleSend} disabled={!canSend}>
+              Send
+            </button>
+          </div>
+          <button
+            className="button button-secondary chat-settings-toggle"
+            type="button"
+            onClick={() => setIsComposerSettingsOpen((prev) => !prev)}
+            aria-expanded={isComposerSettingsOpen}
+          >
+            {isComposerSettingsOpen ? 'Hide Settings' : 'Show Settings'}
           </button>
-          <button className="button button-primary" type="button" onClick={handleSend} disabled={!canSend}>
-            Send
-          </button>
+        </div>
+        <div
+          className={`chat-launch-settings composer-launch-settings${
+            isComposerSettingsOpen ? ' open' : ''
+          }`}
+        >
+            <label className="chat-launch-field">
+              <span>Model</span>
+              <select
+                className="chat-select"
+                value={selectedModelValue}
+                disabled={!canEditLaunchOptions}
+                onChange={(event) => handleModelChange(event.target.value)}
+              >
+                {modelOptions.length === 0 ? <option value="">No models available</option> : null}
+                {modelOptions.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="chat-launch-field">
+              <span>Effort</span>
+              <select
+                className="chat-select"
+                value={selectedEffort ?? ''}
+                disabled={!canEditLaunchOptions || !selectedModelOption}
+                onChange={(event) => handleEffortChange(event.target.value)}
+              >
+                <option value="">Model default</option>
+                {effortOptions.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="chat-cwd-display" title={launchOptions?.cwd ?? 'workspace default'}>
+              <span>CWD</span>
+              <strong>{launchOptions?.cwd ?? 'Workspace default'}</strong>
+            </div>
         </div>
       </div>
     </div>
