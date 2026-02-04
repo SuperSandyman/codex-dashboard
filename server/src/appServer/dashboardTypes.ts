@@ -1,5 +1,26 @@
 export type ChatRole = 'user' | 'assistant' | 'tool' | 'system';
 
+export interface ChatLaunchOptions {
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly cwd: string | null;
+}
+
+export interface ChatModelOption {
+  readonly id: string;
+  readonly displayName: string;
+  readonly description: string | null;
+  readonly efforts: string[];
+  readonly defaultEffort: string | null;
+  readonly isDefault: boolean;
+}
+
+export interface ChatLaunchOptionCatalog {
+  readonly models: ChatModelOption[];
+  readonly workspaceRoot: string | null;
+  readonly cwdChoices: string[];
+}
+
 export interface ChatSummary {
   readonly id: string;
   readonly preview: string;
@@ -7,6 +28,7 @@ export interface ChatSummary {
   readonly source: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly launchOptions: ChatLaunchOptions;
 }
 
 export interface ChatMessage {

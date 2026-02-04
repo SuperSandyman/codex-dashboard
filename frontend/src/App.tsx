@@ -4,10 +4,14 @@ import './App.css';
 import {
   createChat,
   getChat,
+  getChatLaunchCatalog,
   interruptTurn,
   listChats,
   sendChatMessage,
+  updateChatLaunchOptions,
+  type ChatLaunchOptions,
   type ChatMessage,
+  type ChatModelOption,
   type ChatSummary,
 } from './api/chats';
 import { ChatPane } from './features/chat/ChatPane';
@@ -22,6 +26,12 @@ import { parseChatStreamEvent, type ChatStreamEvent } from './features/chat/prot
 interface ToastState {
   readonly message: string;
 }
+
+const EMPTY_LAUNCH_OPTIONS: ChatLaunchOptions = {
+  model: null,
+  effort: null,
+  cwd: null,
+};
 
 const buildChatWsUrl = (threadId: string): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -41,6 +51,24 @@ const formatRelative = (iso: string): string => {
   }).format(date);
 };
 
+const resolveEffortForModel = (
+  models: readonly ChatModelOption[],
+  modelId: string | null,
+  currentEffort: string | null,
+): string | null => {
+  if (!modelId) {
+    return null;
+  }
+  const model = models.find((entry) => entry.id === modelId) ?? null;
+  if (!model) {
+    return null;
+  }
+  if (currentEffort && model.efforts.includes(currentEffort)) {
+    return currentEffort;
+  }
+  return model.defaultEffort ?? model.efforts[0] ?? null;
+};
+
 /**
  * codex app-server を利用した Chat 専用ダッシュボード。
  */
@@ -50,15 +78,27 @@ const App = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [isLoadingChats, setIsLoadingChats] = useState(false);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isUpdatingLaunchOptions, setIsUpdatingLaunchOptions] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+  const [cwdChoices, setCwdChoices] = useState<string[]>([]);
+  const [newChatLaunchOptions, setNewChatLaunchOptions] =
+    useState<ChatLaunchOptions>(EMPTY_LAUNCH_OPTIONS);
   const selectedChatIdRef = useRef<string | null>(null);
 
   const selectedChat = useMemo(() => {
     return chats.find((chat) => chat.id === selectedChatId) ?? null;
   }, [chats, selectedChatId]);
+
+  const newChatEfforts = useMemo(() => {
+    const model = modelOptions.find((entry) => entry.id === newChatLaunchOptions.model) ?? null;
+    return model?.efforts ?? [];
+  }, [modelOptions, newChatLaunchOptions.model]);
 
   useEffect(() => {
     selectedChatIdRef.current = selectedChatId;
@@ -80,13 +120,43 @@ const App = () => {
     const sorted = sortChatsByUpdatedAt(result.data.chats);
     setChats(sorted);
 
-    const hasSelected = selectedChatId
-      ? sorted.some((chat) => chat.id === selectedChatId)
-      : false;
+    const hasSelected = selectedChatId ? sorted.some((chat) => chat.id === selectedChatId) : false;
     if (!hasSelected) {
       setSelectedChatId(sorted[0]?.id ?? null);
     }
   }, [selectedChatId, showToast]);
+
+  const refreshLaunchCatalog = useCallback(async () => {
+    setIsLoadingCatalog(true);
+    const result = await getChatLaunchCatalog();
+    setIsLoadingCatalog(false);
+    const catalog = result.data;
+    if (!result.ok || !catalog) {
+      showToast(result.error?.message ?? 'Failed to load launch options');
+      return;
+    }
+
+    setModelOptions(catalog.models);
+    setWorkspaceRoot(catalog.workspaceRoot);
+    setCwdChoices(catalog.cwdChoices);
+
+    setNewChatLaunchOptions((prev) => {
+      const model =
+        prev.model && catalog.models.some((entry) => entry.id === prev.model)
+          ? prev.model
+          : null;
+      const effort = resolveEffortForModel(catalog.models, model, prev.effort);
+      const cwd =
+        prev.cwd && catalog.cwdChoices.includes(prev.cwd)
+          ? prev.cwd
+          : null;
+      return {
+        model,
+        effort,
+        cwd,
+      };
+    });
+  }, [showToast]);
 
   const loadChatDetail = useCallback(
     async (chatId: string) => {
@@ -153,12 +223,12 @@ const App = () => {
       if (isCancelled) {
         return;
       }
-      await refreshChats();
+      await Promise.all([refreshChats(), refreshLaunchCatalog()]);
     })();
     return () => {
       isCancelled = true;
     };
-  }, [refreshChats]);
+  }, [refreshChats, refreshLaunchCatalog]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -224,7 +294,7 @@ const App = () => {
 
   const handleCreateChat = async () => {
     setIsLoadingChats(true);
-    const result = await createChat();
+    const result = await createChat(newChatLaunchOptions);
     setIsLoadingChats(false);
     if (!result.ok || !result.data) {
       showToast(result.error?.message ?? 'Failed to create chat');
@@ -234,6 +304,39 @@ const App = () => {
     setChats((prev) => sortChatsByUpdatedAt([chat, ...prev]));
     setSelectedChatId(chat.id);
     setIsMenuOpen(false);
+  };
+
+  const handleUpdateSelectedLaunchOptions = async (model: string | null, effort: string | null) => {
+    if (!selectedChatId || !selectedChat) {
+      return;
+    }
+    if (
+      selectedChat.launchOptions.model === model &&
+      selectedChat.launchOptions.effort === effort
+    ) {
+      return;
+    }
+
+    setIsUpdatingLaunchOptions(true);
+    const result = await updateChatLaunchOptions(selectedChatId, { model, effort });
+    setIsUpdatingLaunchOptions(false);
+    const payload = result.data;
+    if (!result.ok || !payload) {
+      showToast(result.error?.message ?? 'Failed to update launch options');
+      return;
+    }
+
+    setChats((prev) => {
+      return prev.map((chat) => {
+        if (chat.id !== selectedChatId) {
+          return chat;
+        }
+        return {
+          ...chat,
+          launchOptions: payload.launchOptions,
+        };
+      });
+    });
   };
 
   const handleSend = async (text: string) => {
@@ -248,6 +351,12 @@ const App = () => {
     const result = await sendChatMessage(selectedChatId, text);
     setIsSending(false);
     if (!result.ok || !result.data) {
+      if (result.error?.code === 'chat_not_found') {
+        showToast('Thread not found. Please create a new chat manually.');
+        void refreshChats();
+        return;
+      }
+
       showToast(result.error?.message ?? 'Failed to send message');
       loadChatDetail(selectedChatId);
       return;
@@ -265,6 +374,11 @@ const App = () => {
       return;
     }
     setActiveTurnId(null);
+  };
+
+  const handleRefresh = () => {
+    void refreshChats();
+    void refreshLaunchCatalog();
   };
 
   return (
@@ -295,8 +409,8 @@ const App = () => {
           <button
             className="button button-secondary"
             type="button"
-            onClick={refreshChats}
-            disabled={isLoadingChats}
+            onClick={handleRefresh}
+            disabled={isLoadingChats || isLoadingCatalog}
           >
             Refresh
           </button>
@@ -309,6 +423,92 @@ const App = () => {
           onClick={() => setIsMenuOpen(false)}
         />
         <aside className="sidebar">
+          <section className="launch-form">
+            <div className="section-title">New Chat</div>
+            <label className="field-block">
+              <span>Model</span>
+              <select
+                className="field-input"
+                value={newChatLaunchOptions.model ?? ''}
+                disabled={isLoadingCatalog || modelOptions.length === 0}
+                onChange={(event) => {
+                  const nextModel = event.target.value.length > 0 ? event.target.value : null;
+                  setNewChatLaunchOptions((prev) => {
+                    const nextEffort = resolveEffortForModel(modelOptions, nextModel, prev.effort);
+                    return {
+                      ...prev,
+                      model: nextModel,
+                      effort: nextEffort,
+                    };
+                  });
+                }}
+              >
+                <option value="">App default</option>
+                {modelOptions.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field-block">
+              <span>Effort</span>
+              <select
+                className="field-input"
+                value={newChatLaunchOptions.effort ?? ''}
+                disabled={
+                  isLoadingCatalog ||
+                  !newChatLaunchOptions.model ||
+                  newChatEfforts.length === 0
+                }
+                onChange={(event) => {
+                  const nextEffort = event.target.value.length > 0 ? event.target.value : null;
+                  setNewChatLaunchOptions((prev) => {
+                    return {
+                      ...prev,
+                      effort: nextEffort,
+                    };
+                  });
+                }}
+              >
+                <option value="">Model default</option>
+                {newChatEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field-block">
+              <span>Directory</span>
+              <select
+                className="field-input"
+                value={newChatLaunchOptions.cwd ?? ''}
+                disabled={isLoadingCatalog || workspaceRoot === null}
+                onChange={(event) => {
+                  const nextCwd = event.target.value.length > 0 ? event.target.value : null;
+                  setNewChatLaunchOptions((prev) => {
+                    return {
+                      ...prev,
+                      cwd: nextCwd,
+                    };
+                  });
+                }}
+              >
+                <option value="">
+                  {workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'}
+                </option>
+                {cwdChoices.filter((cwd) => cwd !== workspaceRoot).map((cwd) => (
+                  <option key={cwd} value={cwd}>
+                    {cwd}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+
           <div className="section-title">Chats</div>
           <div className="chat-list">
             {chats.length === 0 ? <div className="chat-list-empty">No chats yet.</div> : null}
@@ -341,8 +541,12 @@ const App = () => {
             activeTurnId={activeTurnId}
             isLoading={isLoadingChat}
             isSending={isSending}
+            launchOptions={selectedChat?.launchOptions ?? null}
+            modelOptions={modelOptions}
+            isUpdatingLaunchOptions={isUpdatingLaunchOptions}
             onSend={handleSend}
             onStop={handleStop}
+            onUpdateLaunchOptions={handleUpdateSelectedLaunchOptions}
           />
         </section>
       </main>

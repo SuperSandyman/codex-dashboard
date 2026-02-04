@@ -1,4 +1,4 @@
-import type { ChatDetail, ChatMessage, ChatRole, ChatSummary } from './dashboardTypes.js';
+import type { ChatDetail, ChatMessage, ChatModelOption, ChatRole, ChatSummary } from './dashboardTypes.js';
 
 interface AppServerThreadListResult {
   readonly data: AppServerThread[];
@@ -13,6 +13,26 @@ interface AppServerTurnStartResult {
   readonly turn: {
     readonly id: string;
   };
+}
+
+interface AppServerModelListResult {
+  readonly data: AppServerModelEntry[];
+  readonly nextCursor: string | null;
+}
+
+interface AppServerModelEntry {
+  readonly id: string;
+  readonly model: string;
+  readonly displayName: string;
+  readonly description: string | null;
+  readonly supportedReasoningEfforts: AppServerReasoningEffort[];
+  readonly defaultReasoningEffort: string | null;
+  readonly isDefault: boolean;
+}
+
+interface AppServerReasoningEffort {
+  readonly reasoningEffort: string;
+  readonly description: string | null;
 }
 
 interface AppServerThread {
@@ -378,6 +398,71 @@ const parseThread = (value: unknown): AppServerThread | null => {
   };
 };
 
+const parseReasoningEffort = (value: unknown): AppServerReasoningEffort | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const reasoningEffort = readString(value, 'reasoningEffort');
+  if (!reasoningEffort) {
+    return null;
+  }
+  const description = value.description === null ? null : asString(value.description);
+  if (value.description !== null && description === null) {
+    return null;
+  }
+  return {
+    reasoningEffort,
+    description,
+  };
+};
+
+const parseModelEntry = (value: unknown): AppServerModelEntry | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = readString(value, 'id');
+  const model = readString(value, 'model');
+  const displayName = readString(value, 'displayName');
+  if (!id || !model || !displayName || typeof value.isDefault !== 'boolean') {
+    return null;
+  }
+
+  const description = value.description === null ? null : asString(value.description);
+  if (value.description !== null && description === null) {
+    return null;
+  }
+
+  const defaultReasoningEffort =
+    value.defaultReasoningEffort === null ? null : asString(value.defaultReasoningEffort);
+  if (value.defaultReasoningEffort !== null && defaultReasoningEffort === null) {
+    return null;
+  }
+
+  const supportedReasoningEfforts: AppServerReasoningEffort[] = [];
+  if (!Array.isArray(value.supportedReasoningEfforts)) {
+    return null;
+  }
+  value.supportedReasoningEfforts.forEach((entry) => {
+    const parsed = parseReasoningEffort(entry);
+    if (parsed) {
+      supportedReasoningEfforts.push(parsed);
+    }
+  });
+  if (supportedReasoningEfforts.length !== value.supportedReasoningEfforts.length) {
+    return null;
+  }
+
+  return {
+    id,
+    model,
+    displayName,
+    description,
+    supportedReasoningEfforts,
+    defaultReasoningEffort,
+    isDefault: value.isDefault,
+  };
+};
+
 /**
  * thread/list の result を検証して取り出す。
  * @param value RPC result
@@ -402,6 +487,35 @@ export const parseThreadListResult = (value: unknown): AppServerThreadListResult
 
   return {
     data: threads,
+    nextCursor,
+  };
+};
+
+/**
+ * model/list の result を検証して取り出す。
+ * @param value RPC result
+ */
+export const parseModelListResult = (value: unknown): AppServerModelListResult | null => {
+  if (!isRecord(value) || !Array.isArray(value.data)) {
+    return null;
+  }
+
+  const models: AppServerModelEntry[] = [];
+  for (const entry of value.data) {
+    const parsed = parseModelEntry(entry);
+    if (!parsed) {
+      return null;
+    }
+    models.push(parsed);
+  }
+
+  const nextCursor = value.nextCursor === null ? null : asString(value.nextCursor);
+  if (value.nextCursor !== null && nextCursor === null) {
+    return null;
+  }
+
+  return {
+    data: models,
     nextCursor,
   };
 };
@@ -465,6 +579,32 @@ export const toChatSummary = (thread: AppServerThread): ChatSummary => {
     source: normalizeSource(thread.source),
     createdAt: toIsoTimestamp(thread.createdAt),
     updatedAt: toIsoTimestamp(thread.updatedAt),
+    launchOptions: {
+      model: null,
+      effort: null,
+      cwd: null,
+    },
+  };
+};
+
+/**
+ * app-server のモデル情報をダッシュボード表示用へ変換する。
+ * @param model app-server model entry
+ */
+export const toChatModelOption = (model: AppServerModelEntry): ChatModelOption => {
+  const efforts = model.supportedReasoningEfforts.map((entry) => entry.reasoningEffort);
+  const defaultEffort =
+    model.defaultReasoningEffort && efforts.includes(model.defaultReasoningEffort)
+      ? model.defaultReasoningEffort
+      : efforts[0] ?? null;
+
+  return {
+    id: model.model,
+    displayName: model.displayName,
+    description: model.description,
+    efforts,
+    defaultEffort,
+    isDefault: model.isDefault,
   };
 };
 
