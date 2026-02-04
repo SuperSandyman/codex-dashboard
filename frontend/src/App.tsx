@@ -98,6 +98,7 @@ const App = () => {
   const [cwdChoices, setCwdChoices] = useState<string[]>([]);
   const [newChatLaunchOptions, setNewChatLaunchOptions] =
     useState<ChatLaunchOptions>(EMPTY_LAUNCH_OPTIONS);
+  const [newChatPrompt, setNewChatPrompt] = useState('');
   const selectedChatIdRef = useRef<string | null>(null);
 
   const selectedChat = useMemo(() => {
@@ -314,6 +315,21 @@ const App = () => {
     setSelectedChatId(chat.id);
     setIsMenuOpen(false);
     setIsNewChatPanelOpen(false);
+
+    const firstPrompt = newChatPrompt.trim();
+    setNewChatPrompt('');
+    if (!firstPrompt) {
+      return;
+    }
+
+    setIsSending(true);
+    const sendResult = await sendChatMessage(chat.id, firstPrompt);
+    setIsSending(false);
+    if (!sendResult.ok || !sendResult.data) {
+      showToast(sendResult.error?.message ?? 'Failed to send first prompt');
+      return;
+    }
+    setActiveTurnId(sendResult.data.turnId);
   };
 
   const handleUpdateSelectedLaunchOptions = async (model: string | null, effort: string | null) => {
@@ -507,6 +523,17 @@ const App = () => {
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="field-block new-chat-prompt-field">
+            <span>Prompt</span>
+            <textarea
+              className="field-input new-chat-prompt"
+              placeholder="Type the first prompt..."
+              value={newChatPrompt}
+              onChange={(event) => setNewChatPrompt(event.target.value)}
+              disabled={isLoadingChats}
+            />
           </label>
 
           <div className="new-chat-panel-actions">

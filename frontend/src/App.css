@@ -68,11 +68,23 @@
   grid-column: 1 / -1;
 }
 
+.new-chat-prompt-field {
+  grid-column: 1 / -1;
+}
+
 .new-chat-panel-actions {
+  grid-column: 1 / -1;
   display: flex;
   gap: 8px;
   justify-content: flex-end;
   align-items: center;
+  padding-top: 6px;
+  border-top: 1px solid rgba(100, 120, 130, 0.2);
+}
+
+.new-chat-prompt {
+  min-height: 72px;
+  resize: vertical;
 }
 
 .brand {
