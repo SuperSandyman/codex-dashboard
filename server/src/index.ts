@@ -19,6 +19,17 @@ interface SendMessageRequestBody {
   readonly text: string;
 }
 
+interface CreateChatRequestBody {
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly cwd: string | null;
+}
+
+interface UpdateChatOptionsRequestBody {
+  readonly model: string | null;
+  readonly effort: string | null;
+}
+
 interface InterruptRequestBody {
   readonly turnId?: string | null;
 }
@@ -40,6 +51,81 @@ const parseSendMessageBody = (value: unknown): SendMessageRequestBody | ApiError
     return { code: 'invalid_payload', message: 'text は空にできません。' };
   }
   return { text };
+};
+
+const normalizeOptionalString = (
+  value: unknown,
+  key: string,
+): { ok: true; value: string | null } | { ok: false; error: ApiError } => {
+  if (value === undefined || value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'string') {
+    return {
+      ok: false,
+      error: { code: 'invalid_payload', message: `${key} は string で指定してください。` },
+    };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return {
+      ok: false,
+      error: { code: 'invalid_payload', message: `${key} は空文字にできません。` },
+    };
+  }
+  return { ok: true, value: trimmed };
+};
+
+const parseCreateChatBody = (value: unknown): CreateChatRequestBody | ApiError => {
+  if (value === null || value === undefined) {
+    return { model: null, effort: null, cwd: null };
+  }
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'JSON オブジェクトで指定してください。' };
+  }
+
+  const modelResult = normalizeOptionalString(value.model, 'model');
+  if (!modelResult.ok) {
+    return modelResult.error;
+  }
+  const effortResult = normalizeOptionalString(value.effort, 'effort');
+  if (!effortResult.ok) {
+    return effortResult.error;
+  }
+  const cwdResult = normalizeOptionalString(value.cwd, 'cwd');
+  if (!cwdResult.ok) {
+    return cwdResult.error;
+  }
+
+  return {
+    model: modelResult.value,
+    effort: effortResult.value,
+    cwd: cwdResult.value,
+  };
+};
+
+const parseUpdateChatOptionsBody = (value: unknown): UpdateChatOptionsRequestBody | ApiError => {
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'model / effort を含む JSON が必要です。' };
+  }
+
+  if (!('model' in value) && !('effort' in value)) {
+    return { code: 'invalid_payload', message: 'model または effort を指定してください。' };
+  }
+
+  const modelResult = normalizeOptionalString(value.model, 'model');
+  if (!modelResult.ok) {
+    return modelResult.error;
+  }
+  const effortResult = normalizeOptionalString(value.effort, 'effort');
+  if (!effortResult.ok) {
+    return effortResult.error;
+  }
+
+  return {
+    model: modelResult.value,
+    effort: effortResult.value,
+  };
 };
 
 const parseInterruptBody = (value: unknown): InterruptRequestBody | ApiError => {
@@ -140,9 +226,33 @@ app.get('/api/chats', async (c) => {
   }
 });
 
-app.post('/api/chats', async (c) => {
+app.get('/api/chat-options', async (c) => {
   try {
-    const chat = await chatBridge.createChat();
+    const catalog = await chatBridge.getLaunchOptionCatalog();
+    return c.json(catalog);
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.post('/api/chats', async (c) => {
+  let payload: unknown = null;
+  const contentType = c.req.header('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    try {
+      payload = await c.req.json();
+    } catch {
+      return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+    }
+  }
+
+  const parsed = parseCreateChatBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const chat = await chatBridge.createChat(parsed);
     return c.json({ chat }, 201);
   } catch (error) {
     return respondBridgeError(error);
@@ -174,6 +284,27 @@ app.post('/api/chats/:id/messages', async (c) => {
   try {
     const result = await chatBridge.sendMessage(c.req.param('id'), parsed.text);
     return c.json(result, 202);
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.patch('/api/chats/:id/options', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseUpdateChatOptionsBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const launchOptions = await chatBridge.updateChatLaunchOptions(c.req.param('id'), parsed);
+    return c.json({ launchOptions });
   } catch (error) {
     return respondBridgeError(error);
   }
