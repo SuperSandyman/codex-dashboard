@@ -13,7 +13,9 @@
   - 初期実装は Chat と Operations Terminal を独立セッションとして運用
 
 - **コードビューワー**
-  - ワークスペースのファイルツリー表示とコード閲覧（まずは read-only）
+  - ワークスペースのファイルツリー表示と CodeMirror ベースのコード編集
+  - ファイル保存（`PUT /api/editor/file`）と簡易競合検知（version 不一致時 409）
+  - `WORKSPACE_ROOT` 配下のみ read/write（path 検証、非テキスト/巨大ファイル拒否）
   - 既存 LSP ビューワー資産の再利用や LSP 連携は後段で検討
 
 - **Skills（Markdown）管理**
