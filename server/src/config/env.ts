@@ -7,6 +7,7 @@ interface EnvConfig {
   readonly port: number;
   readonly bindHost: string;
   readonly workspaceRoot: string | null;
+  readonly terminalIdleTimeoutMs: number;
   readonly appServerCommand: string;
   readonly appServerArgs: readonly string[];
   readonly appServerCwd: string | null;
@@ -19,6 +20,7 @@ const DEFAULT_BIND_HOST = '127.0.0.1';
 const DEFAULT_APP_SERVER_COMMAND = 'codex';
 const DEFAULT_APP_SERVER_ARGS = ['app-server'];
 const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 120000;
+const DEFAULT_TERMINAL_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 const resolveEnvPath = (): string | null => {
   const candidates = [
@@ -135,6 +137,12 @@ export const loadEnvConfig = (): EnvConfig => {
   const appServerCommand = parseAppServerCommand(process.env.APP_SERVER_COMMAND, errors);
   const appServerArgs = parseAppServerArgs(process.env.APP_SERVER_ARGS, errors);
   const appServerCwd = parseAbsolutePath('APP_SERVER_CWD', process.env.APP_SERVER_CWD, errors);
+  const terminalIdleTimeoutMs = parsePositiveNumber(
+    'TERMINAL_IDLE_TIMEOUT_MS',
+    process.env.TERMINAL_IDLE_TIMEOUT_MS,
+    DEFAULT_TERMINAL_IDLE_TIMEOUT_MS,
+    errors,
+  );
   const appServerRequestTimeoutMs = parsePositiveNumber(
     'APP_SERVER_REQUEST_TIMEOUT_MS',
     process.env.APP_SERVER_REQUEST_TIMEOUT_MS,
@@ -153,6 +161,7 @@ export const loadEnvConfig = (): EnvConfig => {
     port,
     bindHost,
     workspaceRoot,
+    terminalIdleTimeoutMs,
     appServerCommand,
     appServerArgs,
     appServerCwd,
