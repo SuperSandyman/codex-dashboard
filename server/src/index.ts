@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws';
 
 import { AppServerChatBridge, ChatBridgeError } from './appServer/chatBridge.js';
 import { loadEnvConfig } from './config/env.js';
+import { EditorFileService, EditorFileServiceError } from './editor/fileService.js';
 import { TerminalSessionError, TerminalSessionManager } from './terminal/sessionManager.js';
 import { listLanIpv4Addresses } from './utils/network.js';
 
@@ -49,6 +50,12 @@ interface TerminalWriteRequestBody {
 interface TerminalResizeRequestBody {
   readonly cols: number;
   readonly rows: number;
+}
+
+interface EditorWriteRequestBody {
+  readonly path: string;
+  readonly content: string;
+  readonly expectedVersion: string;
 }
 
 const MAX_TERMINAL_WRITE_LENGTH = 8192;
@@ -173,7 +180,7 @@ const normalizeOptionalInteger = (
       error: { code: 'invalid_payload', message: `${key} は整数で指定してください。` },
     };
   }
-  return { ok: true, value };
+  return { ok: true, value: value as number };
 };
 
 const parseCreateTerminalBody = (value: unknown): CreateTerminalRequestBody | ApiError => {
@@ -238,8 +245,32 @@ const parseTerminalResizeBody = (value: unknown): TerminalResizeRequestBody | Ap
     return { code: 'invalid_payload', message: 'cols と rows は整数で指定してください。' };
   }
   return {
-    cols: value.cols,
-    rows: value.rows,
+    cols: value.cols as number,
+    rows: value.rows as number,
+  };
+};
+
+const parseEditorWriteBody = (value: unknown): EditorWriteRequestBody | ApiError => {
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'path / content を含む JSON が必要です。' };
+  }
+  if (typeof value.path !== 'string') {
+    return { code: 'invalid_payload', message: 'path は string で指定してください。' };
+  }
+  if (typeof value.content !== 'string') {
+    return { code: 'invalid_payload', message: 'content は string で指定してください。' };
+  }
+  if (typeof value.expectedVersion !== 'string') {
+    return { code: 'invalid_payload', message: 'expectedVersion は string で指定してください。' };
+  }
+  const expectedVersion = value.expectedVersion.trim();
+  if (expectedVersion.length === 0) {
+    return { code: 'invalid_payload', message: 'expectedVersion は空文字にできません。' };
+  }
+  return {
+    path: value.path,
+    content: value.content,
+    expectedVersion,
   };
 };
 
@@ -253,6 +284,14 @@ const respondBridgeError = (error: unknown): Response => {
 
 const respondTerminalError = (error: unknown): Response => {
   if (error instanceof TerminalSessionError) {
+    return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
+  }
+  const message = error instanceof Error ? error.message : '不明なエラーが発生しました。';
+  return Response.json(toErrorResponse('internal_error', message), { status: 500 });
+};
+
+const respondEditorError = (error: unknown): Response => {
+  if (error instanceof EditorFileServiceError) {
     return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
   }
   const message = error instanceof Error ? error.message : '不明なエラーが発生しました。';
@@ -280,6 +319,11 @@ const chatBridge = new AppServerChatBridge({
 const terminalSessionManager = new TerminalSessionManager({
   workspaceRoot: envConfig.workspaceRoot,
   idleTimeoutMs: envConfig.terminalIdleTimeoutMs,
+});
+const editorFileService = new EditorFileService({
+  workspaceRoot: envConfig.workspaceRoot,
+  maxReadFileSizeBytes: envConfig.editorMaxFileSizeBytes,
+  maxSaveFileSizeBytes: envConfig.editorMaxSaveBytes,
 });
 
 const distRoot = path.resolve(process.cwd(), '..', 'frontend', 'dist');
@@ -448,6 +492,64 @@ app.post('/api/chats/:id/interrupt', async (c) => {
     });
   } catch (error) {
     return respondBridgeError(error);
+  }
+});
+
+app.get('/api/editor/catalog', (c) => {
+  try {
+    const catalog = editorFileService.getCatalog();
+    return c.json(catalog);
+  } catch (error) {
+    return respondEditorError(error);
+  }
+});
+
+app.get('/api/editor/tree', async (c) => {
+  const targetPath = c.req.query('path') ?? '';
+  try {
+    const tree = await editorFileService.getTree(targetPath);
+    return c.json(tree);
+  } catch (error) {
+    return respondEditorError(error);
+  }
+});
+
+app.get('/api/editor/file', async (c) => {
+  const targetPath = c.req.query('path');
+  if (!targetPath) {
+    return c.json(toErrorResponse('invalid_payload', 'path クエリが必要です。'), 400);
+  }
+
+  try {
+    const file = await editorFileService.readFile(targetPath);
+    return c.json(file);
+  } catch (error) {
+    return respondEditorError(error);
+  }
+});
+
+app.put('/api/editor/file', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseEditorWriteBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const file = await editorFileService.writeFile({
+      path: parsed.path,
+      content: parsed.content,
+      expectedVersion: parsed.expectedVersion,
+    });
+    return c.json(file);
+  } catch (error) {
+    return respondEditorError(error);
   }
 });
 

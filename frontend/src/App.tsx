@@ -23,6 +23,13 @@ import {
   type TerminalProfile,
   type TerminalSummary,
 } from './api/terminals';
+import {
+  getEditorCatalog,
+  getEditorFile,
+  getEditorTree,
+  saveEditorFile,
+  type EditorTreeNode,
+} from './api/editor';
 import { ChatPane } from './features/chat/ChatPane';
 import {
   addOptimisticUserMessage,
@@ -31,6 +38,8 @@ import {
   touchChatSummary,
 } from './features/chat/messageStore';
 import { parseChatStreamEvent, type ChatStreamEvent } from './features/chat/protocol';
+import { EditorPane } from './features/editor/EditorPane';
+import { FileTree } from './features/editor/FileTree';
 import { TerminalPane } from './features/terminal/TerminalPane';
 import type { TerminalStreamEvent } from './features/terminal/protocol';
 
@@ -116,6 +125,17 @@ const App = () => {
 
   const [terminals, setTerminals] = useState<TerminalSummary[]>([]);
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
+  const [editorWorkspaceRoot, setEditorWorkspaceRoot] = useState<string | null>(null);
+  const [editorTreePath, setEditorTreePath] = useState('');
+  const [editorTreeNodes, setEditorTreeNodes] = useState<EditorTreeNode[]>([]);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [editorContent, setEditorContent] = useState('');
+  const [editorVersion, setEditorVersion] = useState<string | null>(null);
+  const [editorUpdatedAt, setEditorUpdatedAt] = useState<string | null>(null);
+  const [lastSavedContent, setLastSavedContent] = useState('');
+  const [editorLoadError, setEditorLoadError] = useState<string | null>(null);
+  const [editorSaveError, setEditorSaveError] = useState<string | null>(null);
+  const [editorSaveStatus, setEditorSaveStatus] = useState<string | null>(null);
 
   const [isLoadingChats, setIsLoadingChats] = useState(false);
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
@@ -125,6 +145,10 @@ const App = () => {
   const [isLoadingTerminals, setIsLoadingTerminals] = useState(false);
   const [isLoadingTerminalCatalog, setIsLoadingTerminalCatalog] = useState(false);
   const [isCreatingTerminal, setIsCreatingTerminal] = useState(false);
+  const [isLoadingEditorCatalog, setIsLoadingEditorCatalog] = useState(false);
+  const [isLoadingEditorTree, setIsLoadingEditorTree] = useState(false);
+  const [isLoadingEditorFile, setIsLoadingEditorFile] = useState(false);
+  const [isSavingEditorFile, setIsSavingEditorFile] = useState(false);
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -155,6 +179,10 @@ const App = () => {
     const model = modelOptions.find((entry) => entry.id === newChatLaunchOptions.model) ?? null;
     return model?.efforts ?? [];
   }, [modelOptions, newChatLaunchOptions.model]);
+
+  const isEditorDirty = useMemo(() => {
+    return selectedFilePath !== null && editorContent !== lastSavedContent;
+  }, [editorContent, lastSavedContent, selectedFilePath]);
 
   useEffect(() => {
     selectedChatIdRef.current = selectedChatId;
@@ -255,6 +283,58 @@ const App = () => {
       return catalog.workspaceRoot;
     });
   }, [showToast]);
+
+  const refreshEditorCatalog = useCallback(async () => {
+    setIsLoadingEditorCatalog(true);
+    const result = await getEditorCatalog();
+    setIsLoadingEditorCatalog(false);
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to load editor catalog');
+      return;
+    }
+    setEditorWorkspaceRoot(result.data.workspaceRoot);
+  }, [showToast]);
+
+  const loadEditorTree = useCallback(
+    async (targetPath: string) => {
+      setIsLoadingEditorTree(true);
+      setEditorLoadError(null);
+      const result = await getEditorTree(targetPath);
+      setIsLoadingEditorTree(false);
+      if (!result.ok || !result.data) {
+        const message = result.error?.message ?? 'Failed to load file tree';
+        setEditorLoadError(message);
+        showToast(message);
+        return;
+      }
+      setEditorTreePath(result.data.path);
+      setEditorTreeNodes(result.data.nodes);
+    },
+    [showToast],
+  );
+
+  const loadEditorFile = useCallback(
+    async (targetPath: string) => {
+      setIsLoadingEditorFile(true);
+      setEditorLoadError(null);
+      setEditorSaveError(null);
+      setEditorSaveStatus(null);
+      const result = await getEditorFile(targetPath);
+      setIsLoadingEditorFile(false);
+      if (!result.ok || !result.data) {
+        const message = result.error?.message ?? 'Failed to load file';
+        setEditorLoadError(message);
+        showToast(message);
+        return;
+      }
+      setSelectedFilePath(result.data.path);
+      setEditorContent(result.data.content);
+      setLastSavedContent(result.data.content);
+      setEditorVersion(result.data.version);
+      setEditorUpdatedAt(result.data.updatedAt);
+    },
+    [showToast],
+  );
 
   const loadChatDetail = useCallback(
     async (chatId: string) => {
@@ -386,12 +466,13 @@ const App = () => {
         refreshLaunchCatalog(),
         refreshTerminals(),
         refreshTerminalCatalog(),
+        refreshEditorCatalog(),
       ]);
     })();
     return () => {
       isCancelled = true;
     };
-  }, [refreshChats, refreshLaunchCatalog, refreshTerminalCatalog, refreshTerminals]);
+  }, [refreshChats, refreshEditorCatalog, refreshLaunchCatalog, refreshTerminalCatalog, refreshTerminals]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -455,6 +536,30 @@ const App = () => {
     };
   }, [handleChatStreamEvent, selectedChatId, showToast]);
 
+  useEffect(() => {
+    if (activeView !== 'editor' || editorWorkspaceRoot === null) {
+      return;
+    }
+    if (editorTreeNodes.length > 0) {
+      return;
+    }
+    void loadEditorTree('');
+  }, [activeView, editorTreeNodes.length, editorWorkspaceRoot, loadEditorTree]);
+
+  useEffect(() => {
+    if (!isEditorDirty) {
+      return undefined;
+    }
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [isEditorDirty]);
+
   const handleCreateChat = async () => {
     setIsLoadingChats(true);
     const result = await createChat(newChatLaunchOptions);
@@ -466,7 +571,7 @@ const App = () => {
     const chat = result.data.chat;
     setChats((prev) => sortChatsByUpdatedAt([chat, ...prev]));
     setSelectedChatId(chat.id);
-    setActiveView('chat');
+    switchView('chat');
     setIsMenuOpen(false);
     setIsCreatePanelOpen(false);
 
@@ -503,7 +608,7 @@ const App = () => {
     const terminal = result.data.terminal;
     setTerminals((prev) => sortTerminalsByUpdatedAt([terminal, ...prev]));
     setSelectedTerminalId(terminal.id);
-    setActiveView('terminal');
+    switchView('terminal');
     setIsMenuOpen(false);
     setIsCreatePanelOpen(false);
   };
@@ -599,11 +704,87 @@ const App = () => {
     setSelectedTerminalId(nextSelectedTerminalId);
   };
 
+  const confirmDiscardEditorChanges = (): boolean => {
+    if (!isEditorDirty) {
+      return true;
+    }
+    return window.confirm('You have unsaved changes. Discard them?');
+  };
+
+  const handleOpenEditorDirectory = (targetPath: string) => {
+    void loadEditorTree(targetPath);
+    setIsMenuOpen(false);
+  };
+
+  const handleSelectEditorFile = (targetPath: string) => {
+    if (!confirmDiscardEditorChanges()) {
+      return;
+    }
+    void loadEditorFile(targetPath);
+    setIsMenuOpen(false);
+  };
+
+  const handleSaveEditorFile = async () => {
+    if (!selectedFilePath) {
+      return;
+    }
+    if (!editorVersion) {
+      const message = 'Missing file version. Reload the file before saving.';
+      setEditorSaveError(message);
+      showToast(message);
+      return;
+    }
+    setIsSavingEditorFile(true);
+    setEditorSaveError(null);
+    setEditorSaveStatus(null);
+    const result = await saveEditorFile({
+      path: selectedFilePath,
+      content: editorContent,
+      expectedVersion: editorVersion,
+    });
+    setIsSavingEditorFile(false);
+    if (!result.ok || !result.data) {
+      const message = result.error?.message ?? 'Failed to save file';
+      if (result.status === 409) {
+        const conflictMessage = `${message} Local edits are kept.`;
+        setEditorSaveError(conflictMessage);
+        setEditorSaveStatus('Reload the latest file to resolve conflicts.');
+        showToast(conflictMessage);
+        const shouldReload = window.confirm(
+          'This file was updated externally. Reload the latest content and discard local edits?',
+        );
+        if (shouldReload) {
+          void loadEditorFile(selectedFilePath);
+        }
+        return;
+      }
+      setEditorSaveError(message);
+      showToast(message);
+      return;
+    }
+    setEditorContent(result.data.content);
+    setLastSavedContent(result.data.content);
+    setEditorVersion(result.data.version);
+    setEditorUpdatedAt(result.data.updatedAt);
+    setEditorSaveStatus(`Saved at ${formatRelative(result.data.updatedAt)}`);
+  };
+
+  const switchView = (nextView: AppView) => {
+    if (activeView === 'editor' && nextView !== 'editor' && !confirmDiscardEditorChanges()) {
+      return;
+    }
+    setActiveView(nextView);
+  };
+
   const handleRefresh = () => {
     void refreshChats();
     void refreshLaunchCatalog();
     void refreshTerminals();
     void refreshTerminalCatalog();
+    void refreshEditorCatalog();
+    if (activeView === 'editor') {
+      void loadEditorTree(editorTreePath);
+    }
   };
 
   const selectedProfile: TerminalProfile | null =
@@ -654,7 +835,7 @@ const App = () => {
           type="button"
           role="tab"
           aria-selected={activeView === 'chat'}
-          onClick={() => setActiveView('chat')}
+          onClick={() => switchView('chat')}
         >
           Chat
         </button>
@@ -663,7 +844,7 @@ const App = () => {
           type="button"
           role="tab"
           aria-selected={activeView === 'terminal'}
-          onClick={() => setActiveView('terminal')}
+          onClick={() => switchView('terminal')}
         >
           Terminal
         </button>
@@ -672,7 +853,7 @@ const App = () => {
           type="button"
           role="tab"
           aria-selected={activeView === 'editor'}
-          onClick={() => setActiveView('editor')}
+          onClick={() => switchView('editor')}
         >
           Editor
         </button>
@@ -935,7 +1116,19 @@ const App = () => {
           ) : null}
 
           {activeView === 'editor' ? (
-            <div className="chat-list-empty">Editor is not implemented yet.</div>
+            <FileTree
+              currentPath={editorTreePath}
+              selectedFilePath={selectedFilePath}
+              isLoading={isLoadingEditorCatalog || isLoadingEditorTree}
+              nodes={editorTreeNodes}
+              errorMessage={
+                editorWorkspaceRoot === null
+                  ? 'WORKSPACE_ROOT is not configured.'
+                  : editorLoadError
+              }
+              onOpenDirectory={handleOpenEditorDirectory}
+              onSelectFile={handleSelectEditorFile}
+            />
           ) : null}
         </aside>
 
@@ -977,10 +1170,26 @@ const App = () => {
 
           <div className={`view-pane${activeView === 'editor' ? ' active' : ''}`}>
             <div className="chat-card editor-placeholder">
-              <div className="chat-header">
-                <div className="chat-title">Editor</div>
-              </div>
-              <div className="chat-empty">Editor view is reserved for a future implementation.</div>
+              <EditorPane
+                filePath={selectedFilePath}
+                content={editorContent}
+                isLoading={isLoadingEditorFile}
+                isSaving={isSavingEditorFile}
+                isDirty={isEditorDirty}
+                errorMessage={
+                  editorWorkspaceRoot === null
+                    ? 'WORKSPACE_ROOT is not configured.'
+                    : editorLoadError
+                }
+                saveErrorMessage={editorSaveError}
+                saveStatusMessage={editorSaveStatus}
+                onChange={(value) => {
+                  setEditorContent(value);
+                  setEditorSaveError(null);
+                  setEditorSaveStatus(editorUpdatedAt ? `Loaded ${formatRelative(editorUpdatedAt)}` : null);
+                }}
+                onSave={handleSaveEditorFile}
+              />
             </div>
           </div>
         </section>
@@ -989,6 +1198,7 @@ const App = () => {
       {toast ? <div className="toast">{toast.message}</div> : null}
       {activeView === 'chat' && selectedChat ? <div className="footer-id">Chat ID: {selectedChat.id}</div> : null}
       {activeView === 'terminal' && selectedTerminal ? <div className="footer-id">Terminal ID: {selectedTerminal.id}</div> : null}
+      {activeView === 'editor' && selectedFilePath ? <div className="footer-id">File: {selectedFilePath}</div> : null}
     </div>
   );
 };

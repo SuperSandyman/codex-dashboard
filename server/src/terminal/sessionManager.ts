@@ -552,10 +552,10 @@ export class TerminalSessionManager {
     this.#broadcast(session, outputEvent);
   }
 
-  #onExit(session: SessionRecord, exitCode: number, signal: number): void {
+  #onExit(session: SessionRecord, exitCode: number | undefined, signal: number | undefined): void {
     session.status = exitCode === 0 ? 'exited' : 'error';
-    session.exitCode = exitCode;
-    session.signal = signal;
+    session.exitCode = exitCode ?? null;
+    session.signal = signal ?? null;
     session.updatedAt = new Date().toISOString();
     this.#clearIdleTimer(session);
 

@@ -7,6 +7,8 @@ interface EnvConfig {
   readonly port: number;
   readonly bindHost: string;
   readonly workspaceRoot: string | null;
+  readonly editorMaxFileSizeBytes: number;
+  readonly editorMaxSaveBytes: number;
   readonly terminalIdleTimeoutMs: number;
   readonly appServerCommand: string;
   readonly appServerArgs: readonly string[];
@@ -21,6 +23,8 @@ const DEFAULT_APP_SERVER_COMMAND = 'codex';
 const DEFAULT_APP_SERVER_ARGS = ['app-server'];
 const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 120000;
 const DEFAULT_TERMINAL_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_EDITOR_MAX_FILE_SIZE_BYTES = 1024 * 1024;
+const DEFAULT_EDITOR_MAX_SAVE_BYTES = 1024 * 1024;
 
 const resolveEnvPath = (): string | null => {
   const candidates = [
@@ -72,6 +76,25 @@ const parsePositiveNumber = (
   const value = Number(rawValue);
   if (!Number.isFinite(value) || value <= 0) {
     errors.push(`${key} は 1 以上の数値で指定してください。`);
+    return fallback;
+  }
+
+  return value;
+};
+
+const parsePositiveInteger = (
+  key: string,
+  rawValue: string | undefined,
+  fallback: number,
+  errors: string[],
+): number => {
+  if (rawValue === undefined) {
+    return fallback;
+  }
+
+  const value = Number(rawValue);
+  if (!Number.isInteger(value) || value <= 0) {
+    errors.push(`${key} は 1 以上の整数で指定してください。`);
     return fallback;
   }
 
@@ -137,6 +160,18 @@ export const loadEnvConfig = (): EnvConfig => {
   const appServerCommand = parseAppServerCommand(process.env.APP_SERVER_COMMAND, errors);
   const appServerArgs = parseAppServerArgs(process.env.APP_SERVER_ARGS, errors);
   const appServerCwd = parseAbsolutePath('APP_SERVER_CWD', process.env.APP_SERVER_CWD, errors);
+  const editorMaxFileSizeBytes = parsePositiveInteger(
+    'EDITOR_MAX_FILE_SIZE_BYTES',
+    process.env.EDITOR_MAX_FILE_SIZE_BYTES,
+    DEFAULT_EDITOR_MAX_FILE_SIZE_BYTES,
+    errors,
+  );
+  const editorMaxSaveBytes = parsePositiveInteger(
+    'EDITOR_MAX_SAVE_BYTES',
+    process.env.EDITOR_MAX_SAVE_BYTES,
+    DEFAULT_EDITOR_MAX_SAVE_BYTES,
+    errors,
+  );
   const terminalIdleTimeoutMs = parsePositiveNumber(
     'TERMINAL_IDLE_TIMEOUT_MS',
     process.env.TERMINAL_IDLE_TIMEOUT_MS,
@@ -161,6 +196,8 @@ export const loadEnvConfig = (): EnvConfig => {
     port,
     bindHost,
     workspaceRoot,
+    editorMaxFileSizeBytes,
+    editorMaxSaveBytes,
     terminalIdleTimeoutMs,
     appServerCommand,
     appServerArgs,
