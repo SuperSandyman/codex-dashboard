@@ -17,7 +17,7 @@ interface EnvConfig {
   readonly envPath: string | null;
 }
 
-const DEFAULT_PORT = 8787;
+const DEFAULT_PORT = 4877;
 const DEFAULT_BIND_HOST = '127.0.0.1';
 const DEFAULT_APP_SERVER_COMMAND = 'codex';
 const DEFAULT_APP_SERVER_ARGS = ['app-server'];

@@ -31,7 +31,7 @@ pnpm install
 Example:
 
 ```dotenv
-PORT=8787
+PORT=4877
 BIND_HOST=127.0.0.1
 WORKSPACE_ROOT=/absolute/path/to/workspace
 APP_SERVER_COMMAND=codex
@@ -41,7 +41,7 @@ APP_SERVER_CWD=/absolute/path/to/workspace
 
 ## Environment Variables
 
-- `PORT` (default: `8787`): API server port
+- `PORT` (default: `4877`): API server port
 - `BIND_HOST` (default: `127.0.0.1`): bind host (`0.0.0.0` to expose on LAN)
 - `WORKSPACE_ROOT` (optional, recommended): root path for Terminal / Editor / Chat `cwd` restrictions (absolute path)
 - `APP_SERVER_COMMAND` (default: `codex`): app-server command
@@ -60,8 +60,8 @@ Run both frontend and server from the repository root:
 pnpm dev
 ```
 
-- Frontend: `http://localhost:5173`
-- Server API: `http://localhost:8787`
+- Frontend: `http://localhost:4873`
+- Server API: `http://localhost:4877`
 - Vite proxies `/api` and `/ws` to the server.
 
 Run separately:
