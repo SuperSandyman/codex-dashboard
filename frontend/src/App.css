@@ -68,6 +68,30 @@
   grid-column: 1 / -1;
 }
 
+.create-mode-tabs {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+
+.create-mode-tab {
+  border-radius: 999px;
+  border: 1px solid rgba(100, 120, 130, 0.3);
+  background: rgba(10, 14, 16, 0.75);
+  color: var(--text-2);
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.create-mode-tab.active {
+  color: var(--text-0);
+  border-color: rgba(78, 225, 160, 0.5);
+  background: rgba(78, 225, 160, 0.16);
+}
+
 .new-chat-prompt-field {
   grid-column: 1 / -1;
 }
@@ -289,8 +313,42 @@
 .main-panel {
   flex: 1;
   min-height: 0;
-  display: flex;
+  display: block;
+  position: relative;
   overflow: hidden;
+}
+
+.view-pane {
+  position: absolute;
+  inset: 0;
+  display: none;
+  min-height: 0;
+}
+
+.view-pane.active {
+  display: flex;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.view-tab {
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  padding: 8px 14px;
+  background: rgba(9, 14, 18, 0.75);
+  color: var(--text-2);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.view-tab.active {
+  background: rgba(78, 225, 160, 0.18);
+  color: var(--text-0);
+  border-color: rgba(78, 225, 160, 0.5);
 }
 
 .chat-card {
@@ -302,6 +360,81 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.terminal-card {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(100, 120, 130, 0.2);
+  background: rgba(10, 14, 16, 0.8);
+}
+
+.terminal-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--text-1);
+}
+
+.terminal-connection {
+  color: var(--text-2);
+}
+
+.terminal-reconnect {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+
+.terminal-screen {
+  flex: 1;
+  min-height: 0;
+  background: #091015;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.terminal-screen .xterm {
+  height: 100%;
+}
+
+.terminal-command-bar {
+  border-top: 1px solid rgba(100, 120, 130, 0.2);
+  padding: 10px 12px;
+  background: rgba(10, 14, 16, 0.8);
+}
+
+.terminal-pane-actions {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+}
+
+.terminal-list-output {
+  font-size: 0.74rem;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-placeholder {
+  width: 100%;
 }
 
 .chat-header {

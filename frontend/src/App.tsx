@@ -14,6 +14,15 @@ import {
   type ChatModelOption,
   type ChatSummary,
 } from './api/chats';
+import {
+  createTerminal,
+  getTerminalCatalog,
+  killTerminal,
+  listTerminals,
+  type TerminalCatalog,
+  type TerminalProfile,
+  type TerminalSummary,
+} from './api/terminals';
 import { ChatPane } from './features/chat/ChatPane';
 import {
   addOptimisticUserMessage,
@@ -22,15 +31,26 @@ import {
   touchChatSummary,
 } from './features/chat/messageStore';
 import { parseChatStreamEvent, type ChatStreamEvent } from './features/chat/protocol';
+import { TerminalPane } from './features/terminal/TerminalPane';
+import type { TerminalStreamEvent } from './features/terminal/protocol';
 
 interface ToastState {
   readonly message: string;
 }
 
+type AppView = 'chat' | 'terminal' | 'editor';
+type CreateMode = 'chat' | 'terminal';
+
 const EMPTY_LAUNCH_OPTIONS: ChatLaunchOptions = {
   model: null,
   effort: null,
   cwd: null,
+};
+
+const EMPTY_TERMINAL_CATALOG: TerminalCatalog = {
+  workspaceRoot: null,
+  cwdChoices: [],
+  profiles: [],
 };
 
 const buildChatWsUrl = (threadId: string): string => {
@@ -77,33 +97,59 @@ const resolveEffortForModel = (
   return model.defaultEffort ?? model.efforts[0] ?? null;
 };
 
+const sortTerminalsByUpdatedAt = (terminals: readonly TerminalSummary[]): TerminalSummary[] => {
+  return [...terminals].sort((a, b) => {
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
+};
+
 /**
- * codex app-server を利用した Chat 専用ダッシュボード。
+ * Chat と Operations Terminal を切り替えて利用するダッシュボード。
  */
 const App = () => {
+  const [activeView, setActiveView] = useState<AppView>('chat');
+
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
+
+  const [terminals, setTerminals] = useState<TerminalSummary[]>([]);
+  const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
+
   const [isLoadingChats, setIsLoadingChats] = useState(false);
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isUpdatingLaunchOptions, setIsUpdatingLaunchOptions] = useState(false);
+  const [isLoadingTerminals, setIsLoadingTerminals] = useState(false);
+  const [isLoadingTerminalCatalog, setIsLoadingTerminalCatalog] = useState(false);
+  const [isCreatingTerminal, setIsCreatingTerminal] = useState(false);
+
   const [toast, setToast] = useState<ToastState | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isNewChatPanelOpen, setIsNewChatPanelOpen] = useState(false);
+  const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<CreateMode>('chat');
+
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [cwdChoices, setCwdChoices] = useState<string[]>([]);
-  const [newChatLaunchOptions, setNewChatLaunchOptions] =
-    useState<ChatLaunchOptions>(EMPTY_LAUNCH_OPTIONS);
+  const [newChatLaunchOptions, setNewChatLaunchOptions] = useState<ChatLaunchOptions>(EMPTY_LAUNCH_OPTIONS);
   const [newChatPrompt, setNewChatPrompt] = useState('');
+
+  const [terminalCatalog, setTerminalCatalog] = useState<TerminalCatalog>(EMPTY_TERMINAL_CATALOG);
+  const [newTerminalProfileId, setNewTerminalProfileId] = useState<string | null>(null);
+  const [newTerminalCwd, setNewTerminalCwd] = useState<string | null>(null);
+
   const selectedChatIdRef = useRef<string | null>(null);
 
   const selectedChat = useMemo(() => {
     return chats.find((chat) => chat.id === selectedChatId) ?? null;
   }, [chats, selectedChatId]);
+
+  const selectedTerminal = useMemo(() => {
+    return terminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
+  }, [terminals, selectedTerminalId]);
 
   const newChatEfforts = useMemo(() => {
     const model = modelOptions.find((entry) => entry.id === newChatLaunchOptions.model) ?? null;
@@ -156,15 +202,57 @@ const App = () => {
           ? prev.model
           : resolveModelDefault(catalog.models);
       const effort = resolveEffortForModel(catalog.models, model, prev.effort);
-      const cwd =
-        prev.cwd && catalog.cwdChoices.includes(prev.cwd)
-          ? prev.cwd
-          : null;
+      const cwd = prev.cwd && catalog.cwdChoices.includes(prev.cwd) ? prev.cwd : null;
       return {
         model,
         effort,
         cwd,
       };
+    });
+  }, [showToast]);
+
+  const refreshTerminals = useCallback(async () => {
+    setIsLoadingTerminals(true);
+    const result = await listTerminals();
+    setIsLoadingTerminals(false);
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to load terminals');
+      return;
+    }
+
+    const sorted = sortTerminalsByUpdatedAt(result.data.terminals);
+    setTerminals(sorted);
+
+    const hasSelected = selectedTerminalId
+      ? sorted.some((terminal) => terminal.id === selectedTerminalId)
+      : false;
+    if (!hasSelected) {
+      setSelectedTerminalId(sorted[0]?.id ?? null);
+    }
+  }, [selectedTerminalId, showToast]);
+
+  const refreshTerminalCatalog = useCallback(async () => {
+    setIsLoadingTerminalCatalog(true);
+    const result = await getTerminalCatalog();
+    setIsLoadingTerminalCatalog(false);
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to load terminal options');
+      return;
+    }
+
+    const catalog = result.data;
+    setTerminalCatalog(catalog);
+    setNewTerminalProfileId((prev) => {
+      if (prev && catalog.profiles.some((profile) => profile.id === prev)) {
+        return prev;
+      }
+      return catalog.profiles[0]?.id ?? null;
+    });
+    setNewTerminalCwd((prev) => {
+      if (prev && catalog.cwdChoices.includes(prev)) {
+        return prev;
+      }
+      return catalog.workspaceRoot;
     });
   }, [showToast]);
 
@@ -194,7 +282,7 @@ const App = () => {
     [showToast],
   );
 
-  const handleStreamEvent = useCallback(
+  const handleChatStreamEvent = useCallback(
     (event: ChatStreamEvent) => {
       if (event.type === 'ready') {
         setActiveTurnId(event.activeTurnId);
@@ -226,6 +314,66 @@ const App = () => {
     [showToast],
   );
 
+  const handleTerminalStreamEvent = useCallback((event: TerminalStreamEvent) => {
+    if (event.type === 'error') {
+      showToast(event.error.message);
+      return;
+    }
+
+    if (event.type === 'ready') {
+      setTerminals((prev) => {
+        const next = prev.map((terminal) => {
+          if (terminal.id !== event.terminalId) {
+            return terminal;
+          }
+          return {
+            ...terminal,
+            status: event.status,
+            updatedAt: new Date().toISOString(),
+            exitCode: event.exitCode,
+            signal: event.signal,
+          };
+        });
+        return sortTerminalsByUpdatedAt(next);
+      });
+      return;
+    }
+
+    if (event.type === 'output') {
+      setTerminals((prev) => {
+        const next = prev.map((terminal) => {
+          if (terminal.id !== event.terminalId) {
+            return terminal;
+          }
+          const combined = `${terminal.lastOutput}${event.data}`;
+          return {
+            ...terminal,
+            lastOutput: combined.slice(Math.max(combined.length - 160, 0)),
+            updatedAt: new Date().toISOString(),
+          };
+        });
+        return sortTerminalsByUpdatedAt(next);
+      });
+      return;
+    }
+
+    setTerminals((prev) => {
+      const next = prev.map((terminal) => {
+        if (terminal.id !== event.terminalId) {
+          return terminal;
+        }
+        return {
+          ...terminal,
+          status: event.status,
+          updatedAt: new Date().toISOString(),
+          exitCode: event.exitCode,
+          signal: event.signal,
+        };
+      });
+      return sortTerminalsByUpdatedAt(next);
+    });
+  }, [showToast]);
+
   useEffect(() => {
     let isCancelled = false;
     void (async () => {
@@ -233,12 +381,17 @@ const App = () => {
       if (isCancelled) {
         return;
       }
-      await Promise.all([refreshChats(), refreshLaunchCatalog()]);
+      await Promise.all([
+        refreshChats(),
+        refreshLaunchCatalog(),
+        refreshTerminals(),
+        refreshTerminalCatalog(),
+      ]);
     })();
     return () => {
       isCancelled = true;
     };
-  }, [refreshChats, refreshLaunchCatalog]);
+  }, [refreshChats, refreshLaunchCatalog, refreshTerminalCatalog, refreshTerminals]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -290,7 +443,7 @@ const App = () => {
       if (!parsed || parsed.threadId !== selectedChatIdRef.current) {
         return;
       }
-      handleStreamEvent(parsed);
+      handleChatStreamEvent(parsed);
     });
 
     ws.addEventListener('error', () => {
@@ -300,7 +453,7 @@ const App = () => {
     return () => {
       ws.close();
     };
-  }, [handleStreamEvent, selectedChatId, showToast]);
+  }, [handleChatStreamEvent, selectedChatId, showToast]);
 
   const handleCreateChat = async () => {
     setIsLoadingChats(true);
@@ -313,8 +466,9 @@ const App = () => {
     const chat = result.data.chat;
     setChats((prev) => sortChatsByUpdatedAt([chat, ...prev]));
     setSelectedChatId(chat.id);
+    setActiveView('chat');
     setIsMenuOpen(false);
-    setIsNewChatPanelOpen(false);
+    setIsCreatePanelOpen(false);
 
     const firstPrompt = newChatPrompt.trim();
     setNewChatPrompt('');
@@ -330,6 +484,28 @@ const App = () => {
       return;
     }
     setActiveTurnId(sendResult.data.turnId);
+  };
+
+  const handleCreateTerminal = async () => {
+    setIsCreatingTerminal(true);
+    const result = await createTerminal({
+      profile: newTerminalProfileId,
+      cwd: newTerminalCwd,
+      cols: null,
+      rows: null,
+    });
+    setIsCreatingTerminal(false);
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to create terminal');
+      return;
+    }
+
+    const terminal = result.data.terminal;
+    setTerminals((prev) => sortTerminalsByUpdatedAt([terminal, ...prev]));
+    setSelectedTerminalId(terminal.id);
+    setActiveView('terminal');
+    setIsMenuOpen(false);
+    setIsCreatePanelOpen(false);
   };
 
   const handleUpdateSelectedLaunchOptions = async (model: string | null, effort: string | null) => {
@@ -384,7 +560,7 @@ const App = () => {
       }
 
       showToast(result.error?.message ?? 'Failed to send message');
-      loadChatDetail(selectedChatId);
+      void loadChatDetail(selectedChatId);
       return;
     }
     setActiveTurnId(result.data.turnId);
@@ -402,10 +578,36 @@ const App = () => {
     setActiveTurnId(null);
   };
 
+  const handleKillTerminal = async () => {
+    if (!selectedTerminalId) {
+      return;
+    }
+
+    const terminalIdToKill = selectedTerminalId;
+    const result = await killTerminal(selectedTerminalId);
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to kill terminal');
+      return;
+    }
+
+    let nextSelectedTerminalId: string | null = null;
+    setTerminals((prev) => {
+      const next = prev.filter((terminal) => terminal.id !== terminalIdToKill);
+      nextSelectedTerminalId = next[0]?.id ?? null;
+      return sortTerminalsByUpdatedAt(next);
+    });
+    setSelectedTerminalId(nextSelectedTerminalId);
+  };
+
   const handleRefresh = () => {
     void refreshChats();
     void refreshLaunchCatalog();
+    void refreshTerminals();
+    void refreshTerminalCatalog();
   };
+
+  const selectedProfile: TerminalProfile | null =
+    terminalCatalog.profiles.find((profile) => profile.id === newTerminalProfileId) ?? null;
 
   return (
     <div className={`app-shell${isMenuOpen ? ' menu-open' : ''}`}>
@@ -427,131 +629,246 @@ const App = () => {
           <button
             className="button button-primary"
             type="button"
-            onClick={() => setIsNewChatPanelOpen((prev) => !prev)}
-            disabled={isLoadingChats}
+            onClick={() => {
+              setCreateMode(activeView === 'terminal' ? 'terminal' : 'chat');
+              setIsCreatePanelOpen((prev) => !prev);
+            }}
+            disabled={isLoadingChats || isCreatingTerminal}
           >
-            New Chat
+            New Session
           </button>
           <button
             className="button button-secondary"
             type="button"
             onClick={handleRefresh}
-            disabled={isLoadingChats || isLoadingCatalog}
+            disabled={isLoadingChats || isLoadingCatalog || isLoadingTerminals || isLoadingTerminalCatalog}
           >
             Refresh
           </button>
         </div>
       </header>
 
-      {isNewChatPanelOpen ? (
+      <section className="view-tabs" role="tablist" aria-label="views">
+        <button
+          className={`view-tab${activeView === 'chat' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'chat'}
+          onClick={() => setActiveView('chat')}
+        >
+          Chat
+        </button>
+        <button
+          className={`view-tab${activeView === 'terminal' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'terminal'}
+          onClick={() => setActiveView('terminal')}
+        >
+          Terminal
+        </button>
+        <button
+          className={`view-tab${activeView === 'editor' ? ' active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'editor'}
+          onClick={() => setActiveView('editor')}
+        >
+          Editor
+        </button>
+      </section>
+
+      {isCreatePanelOpen ? (
         <section className="new-chat-panel">
-          <div className="section-title">New Chat Settings</div>
-          <label className="field-block">
-            <span>Model</span>
-            <select
-              className="field-input"
-              value={newChatLaunchOptions.model ?? ''}
-              disabled={isLoadingCatalog || modelOptions.length === 0}
-              onChange={(event) => {
-                const nextModel = event.target.value.length > 0 ? event.target.value : null;
-                setNewChatLaunchOptions((prev) => {
-                  const nextEffort = resolveEffortForModel(modelOptions, nextModel, prev.effort);
-                  return {
-                    ...prev,
-                    model: nextModel,
-                    effort: nextEffort,
-                  };
-                });
-              }}
+          <div className="section-title">New Session</div>
+          <div className="create-mode-tabs">
+            <button
+              className={`create-mode-tab${createMode === 'chat' ? ' active' : ''}`}
+              type="button"
+              onClick={() => setCreateMode('chat')}
             >
-              {modelOptions.length === 0 ? <option value="">No models available</option> : null}
-              {modelOptions.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field-block">
-            <span>Effort</span>
-            <select
-              className="field-input"
-              value={newChatLaunchOptions.effort ?? ''}
-              disabled={isLoadingCatalog || !newChatLaunchOptions.model || newChatEfforts.length === 0}
-              onChange={(event) => {
-                const nextEffort = event.target.value.length > 0 ? event.target.value : null;
-                setNewChatLaunchOptions((prev) => {
-                  return {
-                    ...prev,
-                    effort: nextEffort,
-                  };
-                });
-              }}
+              Chat
+            </button>
+            <button
+              className={`create-mode-tab${createMode === 'terminal' ? ' active' : ''}`}
+              type="button"
+              onClick={() => setCreateMode('terminal')}
             >
-              <option value="">Model default</option>
-              {newChatEfforts.map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </select>
-          </label>
+              Terminal
+            </button>
+          </div>
 
-          <label className="field-block">
-            <span>Directory</span>
-            <select
-              className="field-input"
-              value={newChatLaunchOptions.cwd ?? ''}
-              disabled={isLoadingCatalog || workspaceRoot === null}
-              onChange={(event) => {
-                const nextCwd = event.target.value.length > 0 ? event.target.value : null;
-                setNewChatLaunchOptions((prev) => {
-                  return {
-                    ...prev,
-                    cwd: nextCwd,
-                  };
-                });
-              }}
-            >
-              <option value="">
-                {workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'}
-              </option>
-              {cwdChoices.filter((cwd) => cwd !== workspaceRoot).map((cwd) => (
-                <option key={cwd} value={cwd}>
-                  {cwd}
-                </option>
-              ))}
-            </select>
-          </label>
+          {createMode === 'chat' ? (
+            <>
+              <label className="field-block">
+                <span>Model</span>
+                <select
+                  className="field-input"
+                  value={newChatLaunchOptions.model ?? ''}
+                  disabled={isLoadingCatalog || modelOptions.length === 0}
+                  onChange={(event) => {
+                    const nextModel = event.target.value.length > 0 ? event.target.value : null;
+                    setNewChatLaunchOptions((prev) => {
+                      const nextEffort = resolveEffortForModel(modelOptions, nextModel, prev.effort);
+                      return {
+                        ...prev,
+                        model: nextModel,
+                        effort: nextEffort,
+                      };
+                    });
+                  }}
+                >
+                  {modelOptions.length === 0 ? <option value="">No models available</option> : null}
+                  {modelOptions.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label className="field-block new-chat-prompt-field">
-            <span>Prompt</span>
-            <textarea
-              className="field-input new-chat-prompt"
-              placeholder="Type the first prompt..."
-              value={newChatPrompt}
-              onChange={(event) => setNewChatPrompt(event.target.value)}
-              disabled={isLoadingChats}
-            />
-          </label>
+              <label className="field-block">
+                <span>Effort</span>
+                <select
+                  className="field-input"
+                  value={newChatLaunchOptions.effort ?? ''}
+                  disabled={isLoadingCatalog || !newChatLaunchOptions.model || newChatEfforts.length === 0}
+                  onChange={(event) => {
+                    const nextEffort = event.target.value.length > 0 ? event.target.value : null;
+                    setNewChatLaunchOptions((prev) => {
+                      return {
+                        ...prev,
+                        effort: nextEffort,
+                      };
+                    });
+                  }}
+                >
+                  <option value="">Model default</option>
+                  {newChatEfforts.map((effort) => (
+                    <option key={effort} value={effort}>
+                      {effort}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-block">
+                <span>Directory</span>
+                <select
+                  className="field-input"
+                  value={newChatLaunchOptions.cwd ?? ''}
+                  disabled={isLoadingCatalog || workspaceRoot === null}
+                  onChange={(event) => {
+                    const nextCwd = event.target.value.length > 0 ? event.target.value : null;
+                    setNewChatLaunchOptions((prev) => {
+                      return {
+                        ...prev,
+                        cwd: nextCwd,
+                      };
+                    });
+                  }}
+                >
+                  <option value="">
+                    {workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'}
+                  </option>
+                  {cwdChoices.filter((cwd) => cwd !== workspaceRoot).map((cwd) => (
+                    <option key={cwd} value={cwd}>
+                      {cwd}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-block new-chat-prompt-field">
+                <span>Prompt</span>
+                <textarea
+                  className="field-input new-chat-prompt"
+                  placeholder="Type the first prompt..."
+                  value={newChatPrompt}
+                  onChange={(event) => setNewChatPrompt(event.target.value)}
+                  disabled={isLoadingChats}
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="field-block">
+                <span>Profile</span>
+                <select
+                  className="field-input"
+                  value={newTerminalProfileId ?? ''}
+                  disabled={isLoadingTerminalCatalog || terminalCatalog.profiles.length === 0}
+                  onChange={(event) => {
+                    const value = event.target.value.trim();
+                    setNewTerminalProfileId(value.length > 0 ? value : null);
+                  }}
+                >
+                  {terminalCatalog.profiles.length === 0 ? <option value="">No profiles available</option> : null}
+                  {terminalCatalog.profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-block">
+                <span>Directory</span>
+                <select
+                  className="field-input"
+                  value={newTerminalCwd ?? ''}
+                  disabled={isLoadingTerminalCatalog || terminalCatalog.workspaceRoot === null}
+                  onChange={(event) => {
+                    const nextCwd = event.target.value.length > 0 ? event.target.value : null;
+                    setNewTerminalCwd(nextCwd);
+                  }}
+                >
+                  <option value="">
+                    {terminalCatalog.workspaceRoot
+                      ? `Workspace default (${terminalCatalog.workspaceRoot})`
+                      : 'WORKSPACE_ROOT not configured'}
+                  </option>
+                  {terminalCatalog.cwdChoices
+                    .filter((cwd) => cwd !== terminalCatalog.workspaceRoot)
+                    .map((cwd) => (
+                      <option key={cwd} value={cwd}>
+                        {cwd}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <div className="field-block">
+                <span>Command</span>
+                <input
+                  className="field-input"
+                  value={selectedProfile ? `${selectedProfile.command} ${selectedProfile.args.join(' ')}`.trim() : ''}
+                  disabled
+                />
+              </div>
+            </>
+          )}
 
           <div className="new-chat-panel-actions">
             <button
               className="button button-secondary"
               type="button"
-              onClick={() => setIsNewChatPanelOpen(false)}
-              disabled={isLoadingChats}
+              onClick={() => setIsCreatePanelOpen(false)}
+              disabled={isLoadingChats || isCreatingTerminal}
             >
               Cancel
             </button>
             <button
               className="button button-primary"
               type="button"
-              onClick={handleCreateChat}
-              disabled={isLoadingChats}
+              onClick={createMode === 'chat' ? handleCreateChat : handleCreateTerminal}
+              disabled={
+                createMode === 'chat'
+                  ? isLoadingChats
+                  : isCreatingTerminal || !newTerminalProfileId
+              }
             >
-              Create
+              {createMode === 'chat' ? 'Create Chat' : 'Create Terminal'}
             </button>
           </div>
         </section>
@@ -563,50 +880,115 @@ const App = () => {
           onClick={() => setIsMenuOpen(false)}
         />
         <aside className="sidebar">
-          <div className="section-title">Chats</div>
-          <div className="chat-list">
-            {chats.length === 0 ? <div className="chat-list-empty">No chats yet.</div> : null}
-            {chats.map((chat) => {
-              const isSelected = chat.id === selectedChatId;
-              return (
-                <article
-                  key={chat.id}
-                  className={`chat-list-item${isSelected ? ' selected' : ''}`}
-                  onClick={() => {
-                    setSelectedChatId(chat.id);
-                    setIsMenuOpen(false);
-                  }}
-                >
-                  <div className="chat-list-title">{chat.preview || '(untitled)'}</div>
-                  <div className="chat-list-meta">
-                    <span>{chat.source}</span>
-                    <span>{formatRelative(chat.updatedAt)}</span>
-                  </div>
-                </article>
-              );
-            })}
+          <div className="section-title">
+            {activeView === 'chat' ? 'Chats' : activeView === 'terminal' ? 'Terminals' : 'Editor'}
           </div>
+          {activeView === 'chat' ? (
+            <div className="chat-list">
+              {chats.length === 0 ? <div className="chat-list-empty">No chats yet.</div> : null}
+              {chats.map((chat) => {
+                const isSelected = chat.id === selectedChatId;
+                return (
+                  <article
+                    key={chat.id}
+                    className={`chat-list-item${isSelected ? ' selected' : ''}`}
+                    onClick={() => {
+                      setSelectedChatId(chat.id);
+                      setIsMenuOpen(false);
+                    }}
+                  >
+                    <div className="chat-list-title">{chat.preview || '(untitled)'}</div>
+                    <div className="chat-list-meta">
+                      <span>{chat.source}</span>
+                      <span>{formatRelative(chat.updatedAt)}</span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {activeView === 'terminal' ? (
+            <div className="chat-list">
+              {terminals.length === 0 ? <div className="chat-list-empty">No terminals yet.</div> : null}
+              {terminals.map((terminal) => {
+                const isSelected = terminal.id === selectedTerminalId;
+                return (
+                  <article
+                    key={terminal.id}
+                    className={`chat-list-item${isSelected ? ' selected' : ''}`}
+                    onClick={() => {
+                      setSelectedTerminalId(terminal.id);
+                      setIsMenuOpen(false);
+                    }}
+                  >
+                    <div className="chat-list-title">{terminal.profileId}</div>
+                    <div className="chat-list-meta">
+                      <span>{terminal.status}</span>
+                      <span>{formatRelative(terminal.updatedAt)}</span>
+                    </div>
+                    <div className="terminal-list-output">{terminal.lastOutput || '(no output yet)'}</div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {activeView === 'editor' ? (
+            <div className="chat-list-empty">Editor is not implemented yet.</div>
+          ) : null}
         </aside>
 
         <section className="main-panel">
-          <ChatPane
-            chatId={selectedChatId}
-            messages={messages}
-            activeTurnId={activeTurnId}
-            isLoading={isLoadingChat}
-            isSending={isSending}
-            launchOptions={selectedChat?.launchOptions ?? null}
-            modelOptions={modelOptions}
-            isUpdatingLaunchOptions={isUpdatingLaunchOptions}
-            onSend={handleSend}
-            onStop={handleStop}
-            onUpdateLaunchOptions={handleUpdateSelectedLaunchOptions}
-          />
+          <div className={`view-pane${activeView === 'chat' ? ' active' : ''}`}>
+            <ChatPane
+              chatId={selectedChatId}
+              messages={messages}
+              activeTurnId={activeTurnId}
+              isLoading={isLoadingChat}
+              isSending={isSending}
+              launchOptions={selectedChat?.launchOptions ?? null}
+              modelOptions={modelOptions}
+              isUpdatingLaunchOptions={isUpdatingLaunchOptions}
+              onSend={handleSend}
+              onStop={handleStop}
+              onUpdateLaunchOptions={handleUpdateSelectedLaunchOptions}
+            />
+          </div>
+
+          <div className={`view-pane${activeView === 'terminal' ? ' active' : ''}`}>
+            <TerminalPane
+              terminalId={selectedTerminalId}
+              status={selectedTerminal?.status ?? null}
+              onStreamEvent={handleTerminalStreamEvent}
+              onToast={showToast}
+            />
+            <div className="terminal-pane-actions">
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={handleKillTerminal}
+                disabled={!selectedTerminalId || selectedTerminal?.status !== 'running'}
+              >
+                Kill Terminal
+              </button>
+            </div>
+          </div>
+
+          <div className={`view-pane${activeView === 'editor' ? ' active' : ''}`}>
+            <div className="chat-card editor-placeholder">
+              <div className="chat-header">
+                <div className="chat-title">Editor</div>
+              </div>
+              <div className="chat-empty">Editor view is reserved for a future implementation.</div>
+            </div>
+          </div>
         </section>
       </main>
 
       {toast ? <div className="toast">{toast.message}</div> : null}
-      {selectedChat ? <div className="footer-id">Chat ID: {selectedChat.id}</div> : null}
+      {activeView === 'chat' && selectedChat ? <div className="footer-id">Chat ID: {selectedChat.id}</div> : null}
+      {activeView === 'terminal' && selectedTerminal ? <div className="footer-id">Terminal ID: {selectedTerminal.id}</div> : null}
     </div>
   );
 };

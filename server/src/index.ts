@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws';
 
 import { AppServerChatBridge, ChatBridgeError } from './appServer/chatBridge.js';
 import { loadEnvConfig } from './config/env.js';
+import { TerminalSessionError, TerminalSessionManager } from './terminal/sessionManager.js';
 import { listLanIpv4Addresses } from './utils/network.js';
 
 interface ApiError {
@@ -33,6 +34,24 @@ interface UpdateChatOptionsRequestBody {
 interface InterruptRequestBody {
   readonly turnId?: string | null;
 }
+
+interface CreateTerminalRequestBody {
+  readonly profile: string | null;
+  readonly cwd: string | null;
+  readonly cols: number | null;
+  readonly rows: number | null;
+}
+
+interface TerminalWriteRequestBody {
+  readonly data: string;
+}
+
+interface TerminalResizeRequestBody {
+  readonly cols: number;
+  readonly rows: number;
+}
+
+const MAX_TERMINAL_WRITE_LENGTH = 8192;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
@@ -141,8 +160,99 @@ const parseInterruptBody = (value: unknown): InterruptRequestBody | ApiError => 
   return { turnId: value.turnId ?? null };
 };
 
+const normalizeOptionalInteger = (
+  value: unknown,
+  key: string,
+): { ok: true; value: number | null } | { ok: false; error: ApiError } => {
+  if (value === undefined || value === null) {
+    return { ok: true, value: null };
+  }
+  if (!Number.isInteger(value)) {
+    return {
+      ok: false,
+      error: { code: 'invalid_payload', message: `${key} は整数で指定してください。` },
+    };
+  }
+  return { ok: true, value };
+};
+
+const parseCreateTerminalBody = (value: unknown): CreateTerminalRequestBody | ApiError => {
+  if (value === null || value === undefined) {
+    return {
+      profile: null,
+      cwd: null,
+      cols: null,
+      rows: null,
+    };
+  }
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'JSON オブジェクトで指定してください。' };
+  }
+
+  const profileResult = normalizeOptionalString(value.profile, 'profile');
+  if (!profileResult.ok) {
+    return profileResult.error;
+  }
+  const cwdResult = normalizeOptionalString(value.cwd, 'cwd');
+  if (!cwdResult.ok) {
+    return cwdResult.error;
+  }
+  const colsResult = normalizeOptionalInteger(value.cols, 'cols');
+  if (!colsResult.ok) {
+    return colsResult.error;
+  }
+  const rowsResult = normalizeOptionalInteger(value.rows, 'rows');
+  if (!rowsResult.ok) {
+    return rowsResult.error;
+  }
+
+  return {
+    profile: profileResult.value,
+    cwd: cwdResult.value,
+    cols: colsResult.value,
+    rows: rowsResult.value,
+  };
+};
+
+const parseTerminalWriteBody = (value: unknown): TerminalWriteRequestBody | ApiError => {
+  if (!isRecord(value) || typeof value.data !== 'string') {
+    return { code: 'invalid_payload', message: 'data を含む JSON が必要です。' };
+  }
+  if (value.data.length === 0) {
+    return { code: 'invalid_payload', message: 'data は空にできません。' };
+  }
+  if (value.data.length > MAX_TERMINAL_WRITE_LENGTH) {
+    return {
+      code: 'invalid_payload',
+      message: `data は ${MAX_TERMINAL_WRITE_LENGTH} 文字以内で指定してください。`,
+    };
+  }
+  return { data: value.data };
+};
+
+const parseTerminalResizeBody = (value: unknown): TerminalResizeRequestBody | ApiError => {
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'cols / rows を含む JSON が必要です。' };
+  }
+  if (!Number.isInteger(value.cols) || !Number.isInteger(value.rows)) {
+    return { code: 'invalid_payload', message: 'cols と rows は整数で指定してください。' };
+  }
+  return {
+    cols: value.cols,
+    rows: value.rows,
+  };
+};
+
 const respondBridgeError = (error: unknown): Response => {
   if (error instanceof ChatBridgeError) {
+    return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
+  }
+  const message = error instanceof Error ? error.message : '不明なエラーが発生しました。';
+  return Response.json(toErrorResponse('internal_error', message), { status: 500 });
+};
+
+const respondTerminalError = (error: unknown): Response => {
+  if (error instanceof TerminalSessionError) {
     return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
   }
   const message = error instanceof Error ? error.message : '不明なエラーが発生しました。';
@@ -166,6 +276,10 @@ const chatBridge = new AppServerChatBridge({
   cwd: envConfig.appServerCwd,
   defaultThreadCwd: envConfig.workspaceRoot,
   requestTimeoutMs: envConfig.appServerRequestTimeoutMs,
+});
+const terminalSessionManager = new TerminalSessionManager({
+  workspaceRoot: envConfig.workspaceRoot,
+  idleTimeoutMs: envConfig.terminalIdleTimeoutMs,
 });
 
 const distRoot = path.resolve(process.cwd(), '..', 'frontend', 'dist');
@@ -337,6 +451,108 @@ app.post('/api/chats/:id/interrupt', async (c) => {
   }
 });
 
+app.get('/api/terminal-options', async (c) => {
+  try {
+    const catalog = await terminalSessionManager.getCatalog();
+    return c.json(catalog);
+  } catch (error) {
+    return respondTerminalError(error);
+  }
+});
+
+app.get('/api/terminals', (c) => {
+  try {
+    const terminals = terminalSessionManager.list();
+    return c.json({ terminals });
+  } catch (error) {
+    return respondTerminalError(error);
+  }
+});
+
+app.post('/api/terminals', async (c) => {
+  let payload: unknown = null;
+  const contentType = c.req.header('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    try {
+      payload = await c.req.json();
+    } catch {
+      return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+    }
+  }
+
+  const parsed = parseCreateTerminalBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const terminal = await terminalSessionManager.create(parsed);
+    return c.json({ terminal }, 201);
+  } catch (error) {
+    return respondTerminalError(error);
+  }
+});
+
+app.get('/api/terminals/:id', (c) => {
+  try {
+    const terminal = terminalSessionManager.snapshot(c.req.param('id'));
+    return c.json({ terminal });
+  } catch (error) {
+    return respondTerminalError(error);
+  }
+});
+
+app.post('/api/terminals/:id/write', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseTerminalWriteBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    terminalSessionManager.write(c.req.param('id'), parsed.data);
+    return c.json({ ok: true });
+  } catch (error) {
+    return respondTerminalError(error);
+  }
+});
+
+app.post('/api/terminals/:id/resize', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseTerminalResizeBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    terminalSessionManager.resize(c.req.param('id'), parsed.cols, parsed.rows);
+    return c.json({ ok: true });
+  } catch (error) {
+    return respondTerminalError(error);
+  }
+});
+
+app.delete('/api/terminals/:id', (c) => {
+  try {
+    const terminal = terminalSessionManager.kill(c.req.param('id'));
+    return c.json({ terminal });
+  } catch (error) {
+    return respondTerminalError(error);
+  }
+});
+
 app.onError((error) => {
   console.error('request handler error', error);
   return Response.json(toErrorResponse('internal_error', 'Internal Server Error'), {
@@ -434,6 +650,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const chatWss = new WebSocketServer({ noServer: true });
+const terminalWss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req: IncomingMessage, socket, head) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -449,6 +666,31 @@ server.on('upgrade', (req: IncomingMessage, socket, head) => {
 
     chatWss.handleUpgrade(req, socket, head, (ws) => {
       chatBridge.attachWebSocket(threadId, ws);
+    });
+    return;
+  }
+
+  if (url.pathname.startsWith('/ws/terminals/')) {
+    let terminalId: string;
+    try {
+      terminalId = decodeURIComponent(url.pathname.replace('/ws/terminals/', ''));
+    } catch {
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    terminalWss.handleUpgrade(req, socket, head, (ws) => {
+      try {
+        terminalSessionManager.attachWebSocket(terminalId, ws);
+      } catch (error) {
+        const status = error instanceof TerminalSessionError ? error.status : 500;
+        const reason =
+          error instanceof TerminalSessionError
+            ? `${error.code}:${error.message}`
+            : 'internal_error';
+        ws.close(status === 404 ? 4404 : 1011, reason.slice(0, 120));
+      }
     });
     return;
   }
@@ -482,6 +724,7 @@ server.listen(port, bindHost, () => {
 
 const shutdown = (): void => {
   chatBridge.dispose();
+  terminalSessionManager.dispose();
   server.close();
 };
 
