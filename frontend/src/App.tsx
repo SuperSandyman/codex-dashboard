@@ -583,17 +583,20 @@ const App = () => {
       return;
     }
 
+    const terminalIdToKill = selectedTerminalId;
     const result = await killTerminal(selectedTerminalId);
     if (!result.ok || !result.data) {
       showToast(result.error?.message ?? 'Failed to kill terminal');
       return;
     }
 
+    let nextSelectedTerminalId: string | null = null;
     setTerminals((prev) => {
-      const next = prev.filter((terminal) => terminal.id !== selectedTerminalId);
-      setSelectedTerminalId(next[0]?.id ?? null);
+      const next = prev.filter((terminal) => terminal.id !== terminalIdToKill);
+      nextSelectedTerminalId = next[0]?.id ?? null;
       return sortTerminalsByUpdatedAt(next);
     });
+    setSelectedTerminalId(nextSelectedTerminalId);
   };
 
   const handleRefresh = () => {

@@ -29,6 +29,7 @@ const MAX_ROWS = 200;
 const MAX_SNAPSHOT_LENGTH = 120000;
 const MAX_LAST_OUTPUT_LENGTH = 160;
 const MAX_CLIENT_MESSAGE_LENGTH = 8192;
+const MAX_INPUT_LENGTH = 8192;
 const WS_READY_OPEN = 1;
 
 interface SessionManagerOptions {
@@ -243,6 +244,13 @@ export class TerminalSessionManager {
   write(terminalId: string, input: string): void {
     if (input.length === 0) {
       throw new TerminalSessionError('invalid_payload', 'input は空にできません。', 400);
+    }
+    if (input.length > MAX_INPUT_LENGTH) {
+      throw new TerminalSessionError(
+        'invalid_payload',
+        `input は ${MAX_INPUT_LENGTH} 文字以内で指定してください。`,
+        400,
+      );
     }
 
     const session = this.#sessionById.get(terminalId);

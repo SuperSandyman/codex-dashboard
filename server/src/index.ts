@@ -51,6 +51,8 @@ interface TerminalResizeRequestBody {
   readonly rows: number;
 }
 
+const MAX_TERMINAL_WRITE_LENGTH = 8192;
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
 };
@@ -218,6 +220,12 @@ const parseTerminalWriteBody = (value: unknown): TerminalWriteRequestBody | ApiE
   }
   if (value.data.length === 0) {
     return { code: 'invalid_payload', message: 'data は空にできません。' };
+  }
+  if (value.data.length > MAX_TERMINAL_WRITE_LENGTH) {
+    return {
+      code: 'invalid_payload',
+      message: `data は ${MAX_TERMINAL_WRITE_LENGTH} 文字以内で指定してください。`,
+    };
   }
   return { data: value.data };
 };
