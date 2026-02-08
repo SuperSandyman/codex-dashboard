@@ -72,6 +72,8 @@ export const applyStreamEventToMessages = (
   switch (event.type) {
     case 'ready':
     case 'turn_started':
+    case 'approval_requested':
+    case 'approval_resolved':
       return [...messages];
     case 'item_started':
     case 'item_updated': {

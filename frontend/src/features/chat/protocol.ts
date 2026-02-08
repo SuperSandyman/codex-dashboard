@@ -1,9 +1,10 @@
-import type { ChatMessage, ChatRole } from '../../api/chats';
+import type { ChatApprovalDecision, ChatApprovalRequest, ChatMessage, ChatRole } from '../../api/chats';
 
 export interface ChatStreamReadyEvent {
   readonly type: 'ready';
   readonly threadId: string;
   readonly activeTurnId: string | null;
+  readonly pendingApprovals: ChatApprovalRequest[];
 }
 
 export interface ChatStreamTurnStartedEvent {
@@ -53,6 +54,19 @@ export interface ChatStreamErrorEvent {
   };
 }
 
+export interface ChatStreamApprovalRequestedEvent {
+  readonly type: 'approval_requested';
+  readonly threadId: string;
+  readonly request: ChatApprovalRequest;
+}
+
+export interface ChatStreamApprovalResolvedEvent {
+  readonly type: 'approval_resolved';
+  readonly threadId: string;
+  readonly itemId: string;
+  readonly decision: ChatApprovalDecision;
+}
+
 export type ChatStreamEvent =
   | ChatStreamReadyEvent
   | ChatStreamTurnStartedEvent
@@ -60,7 +74,9 @@ export type ChatStreamEvent =
   | ChatStreamItemStartedEvent
   | ChatStreamItemUpdatedEvent
   | ChatStreamMessageDeltaEvent
-  | ChatStreamErrorEvent;
+  | ChatStreamErrorEvent
+  | ChatStreamApprovalRequestedEvent
+  | ChatStreamApprovalResolvedEvent;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
@@ -96,6 +112,34 @@ const parseChatMessage = (value: unknown): ChatMessage | null => {
   };
 };
 
+const parseChatApprovalRequest = (value: unknown): ChatApprovalRequest | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    typeof value.threadId !== 'string' ||
+    typeof value.turnId !== 'string' ||
+    typeof value.itemId !== 'string' ||
+    (value.kind !== 'commandExecution' && value.kind !== 'fileChange') ||
+    (value.reason !== null && typeof value.reason !== 'string') ||
+    (value.command !== null && typeof value.command !== 'string') ||
+    (value.cwd !== null && typeof value.cwd !== 'string') ||
+    (value.grantRoot !== null && typeof value.grantRoot !== 'string')
+  ) {
+    return null;
+  }
+  return {
+    threadId: value.threadId,
+    turnId: value.turnId,
+    itemId: value.itemId,
+    kind: value.kind,
+    reason: value.reason,
+    command: value.command,
+    cwd: value.cwd,
+    grantRoot: value.grantRoot,
+  };
+};
+
 /**
  * WebSocket で受信したストリームイベントを検証する。
  * @param payload 受信 JSON
@@ -110,10 +154,22 @@ export const parseChatStreamEvent = (payload: unknown): ChatStreamEvent | null =
       if (payload.activeTurnId !== null && typeof payload.activeTurnId !== 'string') {
         return null;
       }
+      if (!Array.isArray(payload.pendingApprovals)) {
+        return null;
+      }
+      const pendingApprovals: ChatApprovalRequest[] = [];
+      for (const entry of payload.pendingApprovals) {
+        const parsed = parseChatApprovalRequest(entry);
+        if (!parsed) {
+          return null;
+        }
+        pendingApprovals.push(parsed);
+      }
       return {
         type: 'ready',
         threadId: payload.threadId,
         activeTurnId: payload.activeTurnId,
+        pendingApprovals,
       };
     case 'turn_started':
       if (typeof payload.turnId !== 'string') {
@@ -193,6 +249,30 @@ export const parseChatStreamEvent = (payload: unknown): ChatStreamEvent | null =
           code: payload.error.code,
           message: payload.error.message,
         },
+      };
+    case 'approval_requested': {
+      const request = parseChatApprovalRequest(payload.request);
+      if (!request) {
+        return null;
+      }
+      return {
+        type: 'approval_requested',
+        threadId: payload.threadId,
+        request,
+      };
+    }
+    case 'approval_resolved':
+      if (
+        typeof payload.itemId !== 'string' ||
+        (payload.decision !== 'accept' && payload.decision !== 'decline')
+      ) {
+        return null;
+      }
+      return {
+        type: 'approval_resolved',
+        threadId: payload.threadId,
+        itemId: payload.itemId,
+        decision: payload.decision,
       };
     default:
       return null;

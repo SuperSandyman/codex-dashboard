@@ -1,4 +1,13 @@
-import type { ChatDetail, ChatMessage, ChatModelOption, ChatRole, ChatSummary } from './dashboardTypes.js';
+import type {
+  ChatApprovalPolicy,
+  ChatApprovalRequest,
+  ChatDetail,
+  ChatMessage,
+  ChatModelOption,
+  ChatRole,
+  ChatSandboxMode,
+  ChatSummary,
+} from './dashboardTypes.js';
 
 interface AppServerThreadListResult {
   readonly data: AppServerThread[];
@@ -76,6 +85,86 @@ const readString = (record: Record<string, unknown>, key: string): string | null
 
 const readNumber = (record: Record<string, unknown>, key: string): number | null => {
   return asNumber(record[key]);
+};
+
+const normalizeToken = (value: string): string => {
+  return value.replace(/[\s_-]/g, '').toLowerCase();
+};
+
+const isChatApprovalPolicy = (value: string): value is ChatApprovalPolicy => {
+  return (
+    value === 'untrusted' ||
+    value === 'on-failure' ||
+    value === 'on-request' ||
+    value === 'never'
+  );
+};
+
+const isChatSandboxMode = (value: string): value is ChatSandboxMode => {
+  return value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access';
+};
+
+/**
+ * 承認ポリシー文字列を canonical 値へ正規化する。
+ * @param value 文字列または unknown
+ */
+export const normalizeChatApprovalPolicy = (value: unknown): ChatApprovalPolicy | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const raw = value.trim();
+  if (raw.length === 0) {
+    return null;
+  }
+
+  if (isChatApprovalPolicy(raw)) {
+    return raw;
+  }
+
+  const normalized = normalizeToken(raw);
+  if (normalized === 'untrusted' || normalized === 'unlesstrusted') {
+    return 'untrusted';
+  }
+  if (normalized === 'onfailure') {
+    return 'on-failure';
+  }
+  if (normalized === 'onrequest') {
+    return 'on-request';
+  }
+  if (normalized === 'never') {
+    return 'never';
+  }
+  return null;
+};
+
+/**
+ * sandbox mode 文字列を canonical 値へ正規化する。
+ * @param value 文字列または unknown
+ */
+export const normalizeChatSandboxMode = (value: unknown): ChatSandboxMode | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const raw = value.trim();
+  if (raw.length === 0) {
+    return null;
+  }
+
+  if (isChatSandboxMode(raw)) {
+    return raw;
+  }
+
+  const normalized = normalizeToken(raw);
+  if (normalized === 'readonly') {
+    return 'read-only';
+  }
+  if (normalized === 'workspacewrite') {
+    return 'workspace-write';
+  }
+  if (normalized === 'dangerfullaccess') {
+    return 'danger-full-access';
+  }
+  return null;
 };
 
 const toIsoTimestamp = (unixSeconds: number): string => {
@@ -593,6 +682,8 @@ export const toChatSummary = (thread: AppServerThread): ChatSummary => {
       model: null,
       effort: null,
       cwd: thread.cwd,
+      approvalPolicy: null,
+      sandboxMode: null,
     },
   };
 };
@@ -680,4 +771,207 @@ export const parseRecord = (value: unknown): Record<string, unknown> | null => {
  */
 export const parseStringField = (payload: Record<string, unknown>, key: string): string | null => {
   return readString(payload, key);
+};
+
+interface ConfigDefaults {
+  readonly approvalPolicy: ChatApprovalPolicy | null;
+  readonly sandboxMode: ChatSandboxMode | null;
+}
+
+interface ConfigRequirementOptions {
+  readonly allowedApprovalPolicies: ChatApprovalPolicy[] | null;
+  readonly allowedSandboxModes: ChatSandboxMode[] | null;
+}
+
+const parseStringList = <T extends string>(
+  value: unknown,
+  normalizer: (entry: unknown) => T | null,
+): T[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const unique = new Set<T>();
+  for (const entry of value) {
+    const normalized = normalizer(entry);
+    if (!normalized) {
+      return null;
+    }
+    unique.add(normalized);
+  }
+  return [...unique];
+};
+
+/**
+ * config/read 応答からデフォルト approval/sandbox 設定を取り出す。
+ * @param value config/read RPC result
+ */
+export const parseConfigDefaults = (value: unknown): ConfigDefaults | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const config = parseRecord(value.config);
+  if (!config) {
+    return null;
+  }
+
+  const approvalPolicyRaw = config.approvalPolicy;
+  const sandboxModeRaw = config.sandboxMode;
+  const approvalPolicy =
+    approvalPolicyRaw === undefined || approvalPolicyRaw === null
+      ? null
+      : normalizeChatApprovalPolicy(approvalPolicyRaw);
+  const sandboxMode =
+    sandboxModeRaw === undefined || sandboxModeRaw === null
+      ? null
+      : normalizeChatSandboxMode(sandboxModeRaw);
+
+  if ((approvalPolicyRaw !== undefined && approvalPolicyRaw !== null && !approvalPolicy) || (sandboxModeRaw !== undefined && sandboxModeRaw !== null && !sandboxMode)) {
+    return null;
+  }
+
+  return {
+    approvalPolicy,
+    sandboxMode,
+  };
+};
+
+/**
+ * configRequirements/read 応答から許可ポリシー制約を取り出す。
+ * @param value configRequirements/read RPC result
+ */
+export const parseConfigRequirementOptions = (value: unknown): ConfigRequirementOptions | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (value.requirements === null || value.requirements === undefined) {
+    return {
+      allowedApprovalPolicies: null,
+      allowedSandboxModes: null,
+    };
+  }
+
+  const requirements = parseRecord(value.requirements);
+  if (!requirements) {
+    return null;
+  }
+
+  const allowedApprovalPolicies =
+    requirements.allowedApprovalPolicies === undefined || requirements.allowedApprovalPolicies === null
+      ? null
+      : parseStringList(requirements.allowedApprovalPolicies, normalizeChatApprovalPolicy);
+  const allowedSandboxModes =
+    requirements.allowedSandboxModes === undefined || requirements.allowedSandboxModes === null
+      ? null
+      : parseStringList(requirements.allowedSandboxModes, normalizeChatSandboxMode);
+
+  if (
+    (requirements.allowedApprovalPolicies !== undefined &&
+      requirements.allowedApprovalPolicies !== null &&
+      !allowedApprovalPolicies) ||
+    (requirements.allowedSandboxModes !== undefined &&
+      requirements.allowedSandboxModes !== null &&
+      !allowedSandboxModes)
+  ) {
+    return null;
+  }
+
+  return {
+    allowedApprovalPolicies,
+    allowedSandboxModes,
+  };
+};
+
+const parseApprovalRequestBase = (
+  value: unknown,
+): {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly reason: string | null;
+} | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const threadId = asString(value.threadId);
+  const turnId = asString(value.turnId);
+  const itemId = asString(value.itemId);
+  if (!threadId || !turnId || !itemId) {
+    return null;
+  }
+
+  const reasonRaw = value.reason;
+  const reason = reasonRaw === undefined || reasonRaw === null ? null : asString(reasonRaw);
+  if (reasonRaw !== undefined && reasonRaw !== null && reason === null) {
+    return null;
+  }
+
+  return {
+    threadId,
+    turnId,
+    itemId,
+    reason,
+  };
+};
+
+/**
+ * item/commandExecution/requestApproval の params を取り出す。
+ * @param value server request params
+ */
+export const parseCommandExecutionApprovalRequest = (value: unknown): ChatApprovalRequest | null => {
+  const base = parseApprovalRequestBase(value);
+  if (!base || !isRecord(value)) {
+    return null;
+  }
+
+  const commandRaw = value.command;
+  const cwdRaw = value.cwd;
+  const command =
+    commandRaw === undefined || commandRaw === null ? null : asString(commandRaw);
+  const cwd = cwdRaw === undefined || cwdRaw === null ? null : asString(cwdRaw);
+  if ((commandRaw !== undefined && commandRaw !== null && command === null) || (cwdRaw !== undefined && cwdRaw !== null && cwd === null)) {
+    return null;
+  }
+
+  return {
+    threadId: base.threadId,
+    turnId: base.turnId,
+    itemId: base.itemId,
+    kind: 'commandExecution',
+    reason: base.reason,
+    command,
+    cwd,
+    grantRoot: null,
+  };
+};
+
+/**
+ * item/fileChange/requestApproval の params を取り出す。
+ * @param value server request params
+ */
+export const parseFileChangeApprovalRequest = (value: unknown): ChatApprovalRequest | null => {
+  const base = parseApprovalRequestBase(value);
+  if (!base || !isRecord(value)) {
+    return null;
+  }
+
+  const grantRootRaw = value.grantRoot;
+  const grantRoot =
+    grantRootRaw === undefined || grantRootRaw === null ? null : asString(grantRootRaw);
+  if (grantRootRaw !== undefined && grantRootRaw !== null && grantRoot === null) {
+    return null;
+  }
+
+  return {
+    threadId: base.threadId,
+    turnId: base.turnId,
+    itemId: base.itemId,
+    kind: 'fileChange',
+    reason: base.reason,
+    command: null,
+    cwd: null,
+    grantRoot,
+  };
 };

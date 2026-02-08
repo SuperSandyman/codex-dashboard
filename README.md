@@ -4,7 +4,7 @@ A local development dashboard that lets you switch between Chat, Terminal, and E
 
 ## Features
 
-- Chat: integrates with `codex app-server` for thread creation, messaging, and streaming output
+- Chat: integrates with `codex app-server` for thread creation, messaging, streaming output, launch permission options, and approval responses
 - Terminal: create PTY sessions, send input, resize, and reconnect
 - Editor: browse and edit files under `WORKSPACE_ROOT` with basic conflict detection
 
@@ -83,7 +83,8 @@ pnpm start
 ## Core API / WS Endpoints
 
 - Health: `GET /api/health`
-- Chats: `GET/POST /api/chats`, `POST /api/chats/:id/messages`, `POST /api/chats/:id/interrupt`
+- Chats: `GET/POST /api/chats`, `GET /api/chat-options`, `GET /api/chats/:id`, `PATCH /api/chats/:id/options`
+- Chat actions: `POST /api/chats/:id/messages`, `POST /api/chats/:id/interrupt`, `POST /api/chats/:id/approvals/:itemId`
 - Editor: `GET /api/editor/tree`, `GET/PUT /api/editor/file`
 - Terminals: `GET/POST /api/terminals`, `POST /api/terminals/:id/write`, `POST /api/terminals/:id/resize`
 - Chat WS: `/ws/chats/:threadId`
@@ -96,3 +97,28 @@ pnpm start
 ├── frontend/   # React + Vite UI
 └── server/     # Hono API / WS / PTY / app-server bridge
 ```
+
+## Chat Launch Options
+
+`GET /api/chat-options` returns:
+
+- model choices (`models`)
+- `cwd` choices (`workspaceRoot`, `cwdChoices`)
+- approval/sandbox choices (`approvalPolicies`, `sandboxModes`)
+- defaults (`defaultApprovalPolicy`, `defaultSandboxMode`)
+
+When creating or updating chats, you can set:
+
+- `approvalPolicy` (`untrusted` / `on-failure` / `on-request` / `never`)
+- `sandboxMode` (`read-only` / `workspace-write` / `danger-full-access`)
+
+The server normalizes known aliases (for example `onRequest`, `workspaceWrite`) to canonical values above.
+
+## Approval Flow
+
+When app-server asks for approval (`item/commandExecution/requestApproval` or `item/fileChange/requestApproval`):
+
+1. Dashboard emits WS event `approval_requested`
+2. UI shows a `Yes / No` card inline in Chat view
+3. UI calls `POST /api/chats/:id/approvals/:itemId` with `{ "decision": "accept" | "decline" }`
+4. Dashboard replies to app-server with the same request id and emits `approval_resolved`

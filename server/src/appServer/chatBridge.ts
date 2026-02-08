@@ -9,17 +9,27 @@ import {
   AppServerRequestError,
 } from './client.js';
 import type {
+  ChatApprovalDecision,
+  ChatApprovalPolicy,
+  ChatApprovalRequest,
   ChatDetail,
   ChatLaunchOptionCatalog,
   ChatLaunchOptions,
   ChatMessage,
   ChatModelOption,
   ChatRole,
+  ChatSandboxMode,
   ChatStreamEvent,
   ChatSummary,
 } from './dashboardTypes.js';
 import {
   isChatRole,
+  normalizeChatApprovalPolicy,
+  normalizeChatSandboxMode,
+  parseCommandExecutionApprovalRequest,
+  parseConfigDefaults,
+  parseConfigRequirementOptions,
+  parseFileChangeApprovalRequest,
   parseModelListResult,
   parseNotificationItem,
   parseRecord,
@@ -50,11 +60,15 @@ interface CreateChatLaunchOptionsInput {
   readonly model: string | null;
   readonly effort: string | null;
   readonly cwd: string | null;
+  readonly approvalPolicy: string | null;
+  readonly sandboxMode: string | null;
 }
 
 interface UpdateChatLaunchOptionsInput {
-  readonly model: string | null;
-  readonly effort: string | null;
+  readonly model?: string | null;
+  readonly effort?: string | null;
+  readonly approvalPolicy?: string | null;
+  readonly sandboxMode?: string | null;
 }
 
 interface ChatModelCache {
@@ -62,10 +76,47 @@ interface ChatModelCache {
   readonly loadedAt: number;
 }
 
+interface ChatPolicyCatalog {
+  readonly approvalPolicies: ChatApprovalPolicy[];
+  readonly sandboxModes: ChatSandboxMode[];
+  readonly defaultApprovalPolicy: ChatApprovalPolicy | null;
+  readonly defaultSandboxMode: ChatSandboxMode | null;
+}
+
+interface ChatPolicyCache {
+  readonly catalog: ChatPolicyCatalog;
+  readonly loadedAt: number;
+}
+
+interface PendingApproval {
+  readonly requestId: string | number;
+  readonly request: ChatApprovalRequest;
+}
+
+interface ChatLaunchValidationInput {
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly cwd: string | null;
+  readonly approvalPolicy: string | null;
+  readonly sandboxMode: string | null;
+}
+
 const DEFAULT_PAGE_LIMIT = 100;
 const MAX_PAGE_ROUNDS = 20;
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const POLICY_CACHE_TTL_MS = 30 * 1000;
 const WORKSPACE_DIR_LIMIT = 80;
+const DEFAULT_APPROVAL_POLICIES: ChatApprovalPolicy[] = [
+  'untrusted',
+  'on-failure',
+  'on-request',
+  'never',
+];
+const DEFAULT_SANDBOX_MODES: ChatSandboxMode[] = [
+  'read-only',
+  'workspace-write',
+  'danger-full-access',
+];
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
@@ -110,7 +161,9 @@ export class AppServerChatBridge {
   readonly #subscriptions = new Map<string, Set<WebSocket>>();
   readonly #activeTurnByThread = new Map<string, string>();
   readonly #launchOptionsByThread = new Map<string, ChatLaunchOptions>();
+  readonly #pendingApprovalsByThread = new Map<string, Map<string, PendingApproval>>();
   #modelCache: ChatModelCache | null = null;
+  #policyCache: ChatPolicyCache | null = null;
   #workspaceRootRealPath: string | null | undefined = undefined;
 
   /**
@@ -128,6 +181,9 @@ export class AppServerChatBridge {
     this.#client.onNotification((notification) => {
       this.#handleNotification(notification.method, notification.params);
     });
+    this.#client.onServerRequest((request) => {
+      return this.#handleServerRequest(request.id, request.method, request.params);
+    });
   }
 
   /**
@@ -142,7 +198,9 @@ export class AppServerChatBridge {
     this.#subscriptions.clear();
     this.#activeTurnByThread.clear();
     this.#launchOptionsByThread.clear();
+    this.#pendingApprovalsByThread.clear();
     this.#modelCache = null;
+    this.#policyCache = null;
     this.#client.dispose();
   }
 
@@ -173,16 +231,21 @@ export class AppServerChatBridge {
    */
   async getLaunchOptionCatalog(): Promise<ChatLaunchOptionCatalog> {
     try {
-      const [models, cwdChoices, workspaceRoot] = await Promise.all([
+      const [models, cwdChoices, workspaceRoot, policyCatalog] = await Promise.all([
         this.#listModelsWithFallback(),
         this.#listWorkspaceDirectories(),
         this.#getWorkspaceRootRealPath(),
+        this.#getPolicyCatalog(false),
       ]);
 
       return {
         models,
         workspaceRoot,
         cwdChoices,
+        approvalPolicies: policyCatalog.approvalPolicies,
+        sandboxModes: policyCatalog.sandboxModes,
+        defaultApprovalPolicy: policyCatalog.defaultApprovalPolicy,
+        defaultSandboxMode: policyCatalog.defaultSandboxMode,
       };
     } catch (error) {
       throw this.#mapBridgeError(error, 'chat_options_failed', 'チャット起動オプションの取得に失敗しました。');
@@ -203,8 +266,8 @@ export class AppServerChatBridge {
         model: appliedLaunchOptions.model,
         modelProvider: null,
         cwd: appliedLaunchOptions.cwd,
-        approvalPolicy: 'never',
-        sandbox: null,
+        approvalPolicy: appliedLaunchOptions.approvalPolicy,
+        sandbox: appliedLaunchOptions.sandboxMode,
         config: null,
         baseInstructions: null,
         developerInstructions: null,
@@ -270,9 +333,12 @@ export class AppServerChatBridge {
     try {
       const current = await this.#getOrRestoreLaunchOptions(threadId);
       const next = await this.#validateModelAndEffort({
-        model: input.model,
-        effort: input.effort,
+        model: input.model !== undefined ? input.model : current.model,
+        effort: input.effort !== undefined ? input.effort : current.effort,
         cwd: current.cwd,
+        approvalPolicy:
+          input.approvalPolicy !== undefined ? input.approvalPolicy : current.approvalPolicy,
+        sandboxMode: input.sandboxMode !== undefined ? input.sandboxMode : current.sandboxMode,
       });
       this.#launchOptionsByThread.set(threadId, next);
       return next;
@@ -324,6 +390,45 @@ export class AppServerChatBridge {
   }
 
   /**
+   * 保留中の承認リクエストへ accept/decline を返す。
+   * @param threadId thread ID
+   * @param itemId 承認対象 item ID
+   * @param decision 承認結果
+   */
+  respondApproval(
+    threadId: string,
+    itemId: string,
+    decision: ChatApprovalDecision,
+  ): { readonly itemId: string; readonly decision: ChatApprovalDecision } {
+    const bucket = this.#pendingApprovalsByThread.get(threadId);
+    const pending = bucket?.get(itemId);
+    if (!pending) {
+      throw new ChatBridgeError('approval_not_found', 404, `承認対象が見つかりません: ${itemId}`);
+    }
+
+    const result = { decision: decision === 'accept' ? 'accept' : 'decline' };
+
+    try {
+      this.#client.respondServerRequest(pending.requestId, result);
+    } catch (error) {
+      throw this.#mapBridgeError(error, 'approval_respond_failed', '承認応答の送信に失敗しました。');
+    }
+
+    bucket?.delete(itemId);
+    if (bucket && bucket.size === 0) {
+      this.#pendingApprovalsByThread.delete(threadId);
+    }
+
+    this.#broadcast(threadId, {
+      type: 'approval_resolved',
+      threadId,
+      itemId,
+      decision,
+    });
+    return { itemId, decision };
+  }
+
+  /**
    * 指定 thread のストリームイベント購読へ WebSocket を紐づける。
    * @param threadId thread ID
    * @param ws 接続済み WebSocket
@@ -340,6 +445,7 @@ export class AppServerChatBridge {
       type: 'ready',
       threadId,
       activeTurnId: this.#activeTurnByThread.get(threadId) ?? null,
+      pendingApprovals: this.#listPendingApprovals(threadId),
     });
 
     ws.on('close', () => {
@@ -405,10 +511,13 @@ export class AppServerChatBridge {
       // fall back to defaults when thread metadata restore is unavailable
     }
 
+    const policyCatalog = await this.#getPolicyCatalog(false);
     const fallback: ChatLaunchOptions = {
       model: null,
       effort: null,
       cwd: this.#defaultThreadCwd,
+      approvalPolicy: policyCatalog.defaultApprovalPolicy,
+      sandboxMode: policyCatalog.defaultSandboxMode,
     };
     this.#launchOptionsByThread.set(threadId, fallback);
     return fallback;
@@ -424,10 +533,13 @@ export class AppServerChatBridge {
     }
 
     const resolvedCwd = await this.#restoreCwdOrDefault(fallback.cwd);
+    const policyCatalog = await this.#getPolicyCatalog(false);
     const launchOptions: ChatLaunchOptions = {
       model: fallback.model,
       effort: fallback.effort,
       cwd: resolvedCwd,
+      approvalPolicy: this.#resolveApprovalPolicy(fallback.approvalPolicy, policyCatalog),
+      sandboxMode: this.#resolveSandboxMode(fallback.sandboxMode, policyCatalog),
     };
     this.#launchOptionsByThread.set(threadId, launchOptions);
     return launchOptions;
@@ -455,6 +567,8 @@ export class AppServerChatBridge {
       model: input.model,
       effort: input.effort,
       cwd: null,
+      approvalPolicy: input.approvalPolicy,
+      sandboxMode: input.sandboxMode,
     });
     const cwd = await this.#validateCwd(input.cwd);
     return {
@@ -463,12 +577,18 @@ export class AppServerChatBridge {
     };
   }
 
-  async #validateModelAndEffort(input: ChatLaunchOptions): Promise<ChatLaunchOptions> {
+  async #validateModelAndEffort(input: ChatLaunchValidationInput): Promise<ChatLaunchOptions> {
+    const policyCatalog = await this.#getPolicyCatalog(false);
+    const approvalPolicy = this.#resolveApprovalPolicy(input.approvalPolicy, policyCatalog);
+    const sandboxMode = this.#resolveSandboxMode(input.sandboxMode, policyCatalog);
+
     if (input.model === null && input.effort === null) {
       return {
         model: null,
         effort: null,
         cwd: input.cwd,
+        approvalPolicy,
+        sandboxMode,
       };
     }
 
@@ -503,6 +623,8 @@ export class AppServerChatBridge {
       model: input.model,
       effort: input.effort,
       cwd: input.cwd,
+      approvalPolicy,
+      sandboxMode,
     };
   }
 
@@ -714,8 +836,8 @@ export class AppServerChatBridge {
         },
       ],
       cwd: launchOptions.cwd,
-      approvalPolicy: 'never',
-      sandboxPolicy: null,
+      approvalPolicy: launchOptions.approvalPolicy,
+      sandboxPolicy: this.#toSandboxPolicyPayload(launchOptions.sandboxMode),
       model: launchOptions.model,
       effort: launchOptions.effort,
       summary: null,
@@ -841,6 +963,7 @@ export class AppServerChatBridge {
     if (this.#activeTurnByThread.get(threadId) === turnId) {
       this.#activeTurnByThread.delete(threadId);
     }
+    this.#clearPendingApprovalsForTurn(threadId, turnId);
     this.#broadcast(threadId, {
       type: 'turn_completed',
       threadId,
@@ -897,8 +1020,12 @@ export class AppServerChatBridge {
 
   #handleTurnError(payload: Record<string, unknown>): void {
     const threadId = parseStringField(payload, 'threadId');
+    const turnId = parseStringField(payload, 'turnId');
     if (!threadId) {
       return;
+    }
+    if (turnId) {
+      this.#clearPendingApprovalsForTurn(threadId, turnId);
     }
     const errorRecord = parseRecord(payload.error);
     const message = errorRecord ? parseStringField(errorRecord, 'message') : null;
@@ -910,6 +1037,231 @@ export class AppServerChatBridge {
         message: message ?? 'app-server でエラーが発生しました。',
       },
     });
+  }
+
+  #handleServerRequest(id: string | number, method: string, params: unknown): boolean {
+    switch (method) {
+      case 'item/commandExecution/requestApproval': {
+        const request = parseCommandExecutionApprovalRequest(params);
+        if (!request) {
+          this.#client.rejectServerRequest(id, -32602, 'invalid command approval params');
+          return true;
+        }
+        this.#queueApprovalRequest(id, request);
+        return true;
+      }
+      case 'item/fileChange/requestApproval': {
+        const request = parseFileChangeApprovalRequest(params);
+        if (!request) {
+          this.#client.rejectServerRequest(id, -32602, 'invalid file approval params');
+          return true;
+        }
+        this.#queueApprovalRequest(id, request);
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  #queueApprovalRequest(id: string | number, request: ChatApprovalRequest): void {
+    let bucket = this.#pendingApprovalsByThread.get(request.threadId);
+    if (!bucket) {
+      bucket = new Map<string, PendingApproval>();
+      this.#pendingApprovalsByThread.set(request.threadId, bucket);
+    }
+    bucket.set(request.itemId, {
+      requestId: id,
+      request,
+    });
+    this.#broadcast(request.threadId, {
+      type: 'approval_requested',
+      threadId: request.threadId,
+      request,
+    });
+  }
+
+  #listPendingApprovals(threadId: string): ChatApprovalRequest[] {
+    const bucket = this.#pendingApprovalsByThread.get(threadId);
+    if (!bucket) {
+      return [];
+    }
+    return [...bucket.values()].map((entry) => entry.request);
+  }
+
+  #clearPendingApprovalsForTurn(threadId: string, turnId: string): void {
+    const bucket = this.#pendingApprovalsByThread.get(threadId);
+    if (!bucket) {
+      return;
+    }
+    const matchedItemIds: string[] = [];
+    bucket.forEach((pending, itemId) => {
+      if (pending.request.turnId === turnId) {
+        matchedItemIds.push(itemId);
+      }
+    });
+    matchedItemIds.forEach((itemId) => {
+      bucket.delete(itemId);
+    });
+    if (bucket.size === 0) {
+      this.#pendingApprovalsByThread.delete(threadId);
+    }
+  }
+
+  #resolveApprovalPolicy(
+    value: string | null,
+    catalog: ChatPolicyCatalog,
+  ): ChatApprovalPolicy | null {
+    const normalized = value === null ? null : normalizeChatApprovalPolicy(value);
+    if (value !== null && !normalized) {
+      throw new ChatBridgeError('invalid_approval_policy', 400, `未知の approvalPolicy です: ${value}`);
+    }
+    const resolved = normalized ?? catalog.defaultApprovalPolicy;
+    if (!resolved) {
+      return null;
+    }
+    if (!catalog.approvalPolicies.includes(resolved)) {
+      throw new ChatBridgeError(
+        'invalid_approval_policy',
+        400,
+        `許可されていない approvalPolicy です: ${resolved}`,
+      );
+    }
+    return resolved;
+  }
+
+  #resolveSandboxMode(value: string | null, catalog: ChatPolicyCatalog): ChatSandboxMode | null {
+    const normalized = value === null ? null : normalizeChatSandboxMode(value);
+    if (value !== null && !normalized) {
+      throw new ChatBridgeError('invalid_sandbox_mode', 400, `未知の sandboxMode です: ${value}`);
+    }
+    const resolved = normalized ?? catalog.defaultSandboxMode;
+    if (!resolved) {
+      return null;
+    }
+    if (!catalog.sandboxModes.includes(resolved)) {
+      throw new ChatBridgeError(
+        'invalid_sandbox_mode',
+        400,
+        `許可されていない sandboxMode です: ${resolved}`,
+      );
+    }
+    return resolved;
+  }
+
+  #toSandboxPolicyPayload(sandboxMode: ChatSandboxMode | null): Record<string, unknown> | null {
+    switch (sandboxMode) {
+      case 'read-only':
+        return { type: 'readOnly' };
+      case 'workspace-write':
+        return { type: 'workspaceWrite' };
+      case 'danger-full-access':
+        return { type: 'dangerFullAccess' };
+      default:
+        return null;
+    }
+  }
+
+  async #getPolicyCatalog(forceRefresh: boolean): Promise<ChatPolicyCatalog> {
+    const now = Date.now();
+    if (
+      !forceRefresh &&
+      this.#policyCache &&
+      now - this.#policyCache.loadedAt <= POLICY_CACHE_TTL_MS
+    ) {
+      return this.#policyCache.catalog;
+    }
+
+    const [requirements, defaults] = await Promise.all([
+      this.#readConfigRequirementOptionsWithFallback(),
+      this.#readConfigDefaultsWithFallback(),
+    ]);
+
+    const approvalPolicies =
+      requirements?.allowedApprovalPolicies && requirements.allowedApprovalPolicies.length > 0
+        ? requirements.allowedApprovalPolicies
+        : [...DEFAULT_APPROVAL_POLICIES];
+    const sandboxModes =
+      requirements?.allowedSandboxModes && requirements.allowedSandboxModes.length > 0
+        ? requirements.allowedSandboxModes
+        : [...DEFAULT_SANDBOX_MODES];
+
+    const defaultApprovalPolicy = (() => {
+      if (defaults.approvalPolicy && approvalPolicies.includes(defaults.approvalPolicy)) {
+        return defaults.approvalPolicy;
+      }
+      return approvalPolicies[0] ?? null;
+    })();
+    const defaultSandboxMode = (() => {
+      if (defaults.sandboxMode && sandboxModes.includes(defaults.sandboxMode)) {
+        return defaults.sandboxMode;
+      }
+      return sandboxModes.includes('workspace-write')
+        ? 'workspace-write'
+        : (sandboxModes[0] ?? null);
+    })();
+
+    const catalog: ChatPolicyCatalog = {
+      approvalPolicies,
+      sandboxModes,
+      defaultApprovalPolicy,
+      defaultSandboxMode,
+    };
+    this.#policyCache = {
+      catalog,
+      loadedAt: now,
+    };
+    return catalog;
+  }
+
+  async #readConfigDefaultsWithFallback(): Promise<{
+    readonly approvalPolicy: ChatApprovalPolicy | null;
+    readonly sandboxMode: ChatSandboxMode | null;
+  }> {
+    try {
+      const result = await this.#client.request('config/read', undefined);
+      const parsed = parseConfigDefaults(result);
+      if (parsed) {
+        return parsed;
+      }
+      return {
+        approvalPolicy: null,
+        sandboxMode: null,
+      };
+    } catch (error) {
+      if (error instanceof AppServerRequestError || error instanceof AppServerClientError) {
+        console.warn('config/read is unavailable; policy defaults will use built-in values', {
+          message: error.message,
+        });
+        return {
+          approvalPolicy: null,
+          sandboxMode: null,
+        };
+      }
+      throw error;
+    }
+  }
+
+  async #readConfigRequirementOptionsWithFallback(): Promise<{
+    readonly allowedApprovalPolicies: ChatApprovalPolicy[] | null;
+    readonly allowedSandboxModes: ChatSandboxMode[] | null;
+  } | null> {
+    try {
+      const result = await this.#client.request('configRequirements/read', undefined);
+      const parsed = parseConfigRequirementOptions(result);
+      if (parsed) {
+        return parsed;
+      }
+      return null;
+    } catch (error) {
+      if (error instanceof AppServerRequestError || error instanceof AppServerClientError) {
+        console.warn('configRequirements/read is unavailable; policy restrictions are not applied', {
+          message: error.message,
+        });
+        return null;
+      }
+      throw error;
+    }
   }
 
   #mapBridgeError(error: unknown, code: string, fallback: string): ChatBridgeError {

@@ -25,15 +25,23 @@ interface CreateChatRequestBody {
   readonly model: string | null;
   readonly effort: string | null;
   readonly cwd: string | null;
+  readonly approvalPolicy: string | null;
+  readonly sandboxMode: string | null;
 }
 
 interface UpdateChatOptionsRequestBody {
-  readonly model: string | null;
-  readonly effort: string | null;
+  readonly model?: string | null;
+  readonly effort?: string | null;
+  readonly approvalPolicy?: string | null;
+  readonly sandboxMode?: string | null;
 }
 
 interface InterruptRequestBody {
   readonly turnId?: string | null;
+}
+
+interface RespondApprovalRequestBody {
+  readonly decision: 'accept' | 'decline';
 }
 
 interface CreateTerminalRequestBody {
@@ -104,7 +112,7 @@ const normalizeOptionalString = (
 
 const parseCreateChatBody = (value: unknown): CreateChatRequestBody | ApiError => {
   if (value === null || value === undefined) {
-    return { model: null, effort: null, cwd: null };
+    return { model: null, effort: null, cwd: null, approvalPolicy: null, sandboxMode: null };
   }
   if (!isRecord(value)) {
     return { code: 'invalid_payload', message: 'JSON オブジェクトで指定してください。' };
@@ -122,36 +130,95 @@ const parseCreateChatBody = (value: unknown): CreateChatRequestBody | ApiError =
   if (!cwdResult.ok) {
     return cwdResult.error;
   }
+  const approvalPolicyResult = normalizeOptionalString(value.approvalPolicy, 'approvalPolicy');
+  if (!approvalPolicyResult.ok) {
+    return approvalPolicyResult.error;
+  }
+  const sandboxModeResult = normalizeOptionalString(value.sandboxMode, 'sandboxMode');
+  if (!sandboxModeResult.ok) {
+    return sandboxModeResult.error;
+  }
 
   return {
     model: modelResult.value,
     effort: effortResult.value,
     cwd: cwdResult.value,
+    approvalPolicy: approvalPolicyResult.value,
+    sandboxMode: sandboxModeResult.value,
   };
+};
+
+const parseOptionalUpdateString = (
+  value: unknown,
+  key: string,
+): { ok: true; value: string | null | undefined } | { ok: false; error: ApiError } => {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  const normalized = normalizeOptionalString(value, key);
+  if (!normalized.ok) {
+    return { ok: false, error: normalized.error };
+  }
+  return { ok: true, value: normalized.value };
 };
 
 const parseUpdateChatOptionsBody = (value: unknown): UpdateChatOptionsRequestBody | ApiError => {
   if (!isRecord(value)) {
-    return { code: 'invalid_payload', message: 'model / effort を含む JSON が必要です。' };
+    return {
+      code: 'invalid_payload',
+      message: 'model / effort / approvalPolicy / sandboxMode を含む JSON が必要です。',
+    };
   }
 
-  if (!('model' in value) && !('effort' in value)) {
-    return { code: 'invalid_payload', message: 'model または effort を指定してください。' };
+  if (
+    !('model' in value) &&
+    !('effort' in value) &&
+    !('approvalPolicy' in value) &&
+    !('sandboxMode' in value)
+  ) {
+    return {
+      code: 'invalid_payload',
+      message: 'model / effort / approvalPolicy / sandboxMode のいずれかを指定してください。',
+    };
   }
 
-  const modelResult = normalizeOptionalString(value.model, 'model');
+  const modelResult = parseOptionalUpdateString(value.model, 'model');
   if (!modelResult.ok) {
     return modelResult.error;
   }
-  const effortResult = normalizeOptionalString(value.effort, 'effort');
+  const effortResult = parseOptionalUpdateString(value.effort, 'effort');
   if (!effortResult.ok) {
     return effortResult.error;
+  }
+  const approvalPolicyResult = parseOptionalUpdateString(value.approvalPolicy, 'approvalPolicy');
+  if (!approvalPolicyResult.ok) {
+    return approvalPolicyResult.error;
+  }
+  const sandboxModeResult = parseOptionalUpdateString(value.sandboxMode, 'sandboxMode');
+  if (!sandboxModeResult.ok) {
+    return sandboxModeResult.error;
   }
 
   return {
     model: modelResult.value,
     effort: effortResult.value,
+    approvalPolicy: approvalPolicyResult.value,
+    sandboxMode: sandboxModeResult.value,
   };
+};
+
+const parseRespondApprovalBody = (value: unknown): RespondApprovalRequestBody | ApiError => {
+  if (!isRecord(value) || typeof value.decision !== 'string') {
+    return { code: 'invalid_payload', message: 'decision を含む JSON が必要です。' };
+  }
+  const normalized = value.decision.trim().toLowerCase();
+  if (normalized === 'accept' || normalized === 'yes') {
+    return { decision: 'accept' };
+  }
+  if (normalized === 'decline' || normalized === 'no') {
+    return { decision: 'decline' };
+  }
+  return { code: 'invalid_payload', message: 'decision は accept または decline を指定してください。' };
 };
 
 const parseInterruptBody = (value: unknown): InterruptRequestBody | ApiError => {
@@ -463,6 +530,27 @@ app.patch('/api/chats/:id/options', async (c) => {
   try {
     const launchOptions = await chatBridge.updateChatLaunchOptions(c.req.param('id'), parsed);
     return c.json({ launchOptions });
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.post('/api/chats/:id/approvals/:itemId', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseRespondApprovalBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const result = chatBridge.respondApproval(c.req.param('id'), c.req.param('itemId'), parsed.decision);
+    return c.json(result);
   } catch (error) {
     return respondBridgeError(error);
   }

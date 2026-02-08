@@ -1,11 +1,17 @@
 import { requestJson } from './client';
 
 export type ChatRole = 'user' | 'assistant' | 'tool' | 'system';
+export type ChatApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never';
+export type ChatSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+export type ChatApprovalDecision = 'accept' | 'decline';
+export type ChatApprovalRequestKind = 'commandExecution' | 'fileChange';
 
 export interface ChatLaunchOptions {
   readonly model: string | null;
   readonly effort: string | null;
   readonly cwd: string | null;
+  readonly approvalPolicy: ChatApprovalPolicy | null;
+  readonly sandboxMode: ChatSandboxMode | null;
 }
 
 export interface ChatModelOption {
@@ -21,6 +27,10 @@ export interface ChatLaunchCatalog {
   readonly models: ChatModelOption[];
   readonly workspaceRoot: string | null;
   readonly cwdChoices: string[];
+  readonly approvalPolicies: ChatApprovalPolicy[];
+  readonly sandboxModes: ChatSandboxMode[];
+  readonly defaultApprovalPolicy: ChatApprovalPolicy | null;
+  readonly defaultSandboxMode: ChatSandboxMode | null;
 }
 
 export interface ChatSummary {
@@ -53,11 +63,15 @@ export interface CreateChatRequest {
   readonly model: string | null;
   readonly effort: string | null;
   readonly cwd: string | null;
+  readonly approvalPolicy: ChatApprovalPolicy | null;
+  readonly sandboxMode: ChatSandboxMode | null;
 }
 
 export interface UpdateChatLaunchOptionsRequest {
-  readonly model: string | null;
-  readonly effort: string | null;
+  readonly model?: string | null;
+  readonly effort?: string | null;
+  readonly approvalPolicy?: ChatApprovalPolicy | null;
+  readonly sandboxMode?: ChatSandboxMode | null;
 }
 
 export interface SendMessageResponse {
@@ -67,6 +81,26 @@ export interface SendMessageResponse {
 export interface InterruptTurnResponse {
   readonly interrupted: boolean;
   readonly turnId: string;
+}
+
+export interface ChatApprovalRequest {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly kind: ChatApprovalRequestKind;
+  readonly reason: string | null;
+  readonly command: string | null;
+  readonly cwd: string | null;
+  readonly grantRoot: string | null;
+}
+
+export interface RespondChatApprovalRequest {
+  readonly decision: ChatApprovalDecision;
+}
+
+export interface RespondChatApprovalResponse {
+  readonly itemId: string;
+  readonly decision: ChatApprovalDecision;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -84,12 +118,63 @@ const parseNullableString = (value: unknown): string | null => {
   return typeof value === 'string' ? value : null;
 };
 
+const normalizeToken = (value: string): string => {
+  return value.replace(/[\s_-]/g, '').toLowerCase();
+};
+
+const parseApprovalPolicy = (value: unknown): ChatApprovalPolicy | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const raw = value.trim();
+  if (raw === 'untrusted' || raw === 'on-failure' || raw === 'on-request' || raw === 'never') {
+    return raw;
+  }
+  const normalized = normalizeToken(raw);
+  if (normalized === 'untrusted' || normalized === 'unlesstrusted') {
+    return 'untrusted';
+  }
+  if (normalized === 'onfailure') {
+    return 'on-failure';
+  }
+  if (normalized === 'onrequest') {
+    return 'on-request';
+  }
+  if (normalized === 'never') {
+    return 'never';
+  }
+  return null;
+};
+
+const parseSandboxMode = (value: unknown): ChatSandboxMode | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const raw = value.trim();
+  if (raw === 'read-only' || raw === 'workspace-write' || raw === 'danger-full-access') {
+    return raw;
+  }
+  const normalized = normalizeToken(raw);
+  if (normalized === 'readonly') {
+    return 'read-only';
+  }
+  if (normalized === 'workspacewrite') {
+    return 'workspace-write';
+  }
+  if (normalized === 'dangerfullaccess') {
+    return 'danger-full-access';
+  }
+  return null;
+};
+
 const parseChatLaunchOptions = (value: unknown): ChatLaunchOptions | null => {
   if (value === null || value === undefined) {
     return {
       model: null,
       effort: null,
       cwd: null,
+      approvalPolicy: null,
+      sandboxMode: null,
     };
   }
   if (!isRecord(value)) {
@@ -98,13 +183,29 @@ const parseChatLaunchOptions = (value: unknown): ChatLaunchOptions | null => {
   const model = parseNullableString(value.model);
   const effort = parseNullableString(value.effort);
   const cwd = parseNullableString(value.cwd);
-  if ((value.model !== undefined && value.model !== null && model === null) || (value.effort !== undefined && value.effort !== null && effort === null) || (value.cwd !== undefined && value.cwd !== null && cwd === null)) {
+  const approvalPolicy =
+    value.approvalPolicy === undefined || value.approvalPolicy === null
+      ? null
+      : parseApprovalPolicy(value.approvalPolicy);
+  const sandboxMode =
+    value.sandboxMode === undefined || value.sandboxMode === null
+      ? null
+      : parseSandboxMode(value.sandboxMode);
+  if (
+    (value.model !== undefined && value.model !== null && model === null) ||
+    (value.effort !== undefined && value.effort !== null && effort === null) ||
+    (value.cwd !== undefined && value.cwd !== null && cwd === null) ||
+    (value.approvalPolicy !== undefined && value.approvalPolicy !== null && approvalPolicy === null) ||
+    (value.sandboxMode !== undefined && value.sandboxMode !== null && sandboxMode === null)
+  ) {
     return null;
   }
   return {
     model,
     effort,
     cwd,
+    approvalPolicy,
+    sandboxMode,
   };
 };
 
@@ -258,6 +359,9 @@ const parseLaunchCatalogResponse = (value: unknown): ChatLaunchCatalog | null =>
   if (value.workspaceRoot !== null && typeof value.workspaceRoot !== 'string') {
     return null;
   }
+  if (!Array.isArray(value.approvalPolicies) || !Array.isArray(value.sandboxModes)) {
+    return null;
+  }
 
   const models: ChatModelOption[] = [];
   for (const entry of value.models) {
@@ -276,10 +380,49 @@ const parseLaunchCatalogResponse = (value: unknown): ChatLaunchCatalog | null =>
     cwdChoices.push(entry);
   }
 
+  const approvalPolicies: ChatApprovalPolicy[] = [];
+  for (const entry of value.approvalPolicies) {
+    const parsed = parseApprovalPolicy(entry);
+    if (!parsed) {
+      return null;
+    }
+    approvalPolicies.push(parsed);
+  }
+
+  const sandboxModes: ChatSandboxMode[] = [];
+  for (const entry of value.sandboxModes) {
+    const parsed = parseSandboxMode(entry);
+    if (!parsed) {
+      return null;
+    }
+    sandboxModes.push(parsed);
+  }
+
+  const defaultApprovalPolicy =
+    value.defaultApprovalPolicy === undefined || value.defaultApprovalPolicy === null
+      ? null
+      : parseApprovalPolicy(value.defaultApprovalPolicy);
+  const defaultSandboxMode =
+    value.defaultSandboxMode === undefined || value.defaultSandboxMode === null
+      ? null
+      : parseSandboxMode(value.defaultSandboxMode);
+  if (
+    (value.defaultApprovalPolicy !== undefined &&
+      value.defaultApprovalPolicy !== null &&
+      !defaultApprovalPolicy) ||
+    (value.defaultSandboxMode !== undefined && value.defaultSandboxMode !== null && !defaultSandboxMode)
+  ) {
+    return null;
+  }
+
   return {
     models,
     workspaceRoot: value.workspaceRoot,
     cwdChoices,
+    approvalPolicies,
+    sandboxModes,
+    defaultApprovalPolicy,
+    defaultSandboxMode,
   };
 };
 
@@ -308,6 +451,19 @@ const parseInterruptResponse = (value: unknown): InterruptTurnResponse | null =>
   return {
     interrupted: value.interrupted,
     turnId: value.turnId,
+  };
+};
+
+const parseRespondApprovalResponse = (value: unknown): RespondChatApprovalResponse | null => {
+  if (!isRecord(value) || typeof value.itemId !== 'string' || typeof value.decision !== 'string') {
+    return null;
+  }
+  if (value.decision !== 'accept' && value.decision !== 'decline') {
+    return null;
+  }
+  return {
+    itemId: value.itemId,
+    decision: value.decision,
   };
 };
 
@@ -400,5 +556,27 @@ export const interruptTurn = async (id: string, turnId: string | null) => {
       body: JSON.stringify({ turnId }),
     },
     parseInterruptResponse,
+  );
+};
+
+/**
+ * 承認要求に accept/decline を返す。
+ * @param id thread ID
+ * @param itemId 承認対象 item ID
+ * @param payload 応答内容
+ */
+export const respondChatApproval = async (
+  id: string,
+  itemId: string,
+  payload: RespondChatApprovalRequest,
+) => {
+  return requestJson(
+    `/api/chats/${encodeURIComponent(id)}/approvals/${encodeURIComponent(itemId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    parseRespondApprovalResponse,
   );
 };
