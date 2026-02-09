@@ -1219,7 +1219,7 @@ export class AppServerChatBridge {
     readonly sandboxMode: ChatSandboxMode | null;
   }> {
     try {
-      const result = await this.#client.request('config/read', undefined);
+      const result = await this.#client.request('config/read', {});
       const parsed = parseConfigDefaults(result);
       if (parsed) {
         return parsed;
@@ -1247,7 +1247,7 @@ export class AppServerChatBridge {
     readonly allowedSandboxModes: ChatSandboxMode[] | null;
   } | null> {
     try {
-      const result = await this.#client.request('configRequirements/read', undefined);
+      const result = await this.#client.request('configRequirements/read', {});
       const parsed = parseConfigRequirementOptions(result);
       if (parsed) {
         return parsed;
