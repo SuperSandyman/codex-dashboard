@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { ChatLaunchOptions, ChatMessage, ChatModelOption } from '../../api/chats';
+import type {
+  ChatApprovalDecision,
+  ChatApprovalPolicy,
+  ChatApprovalRequest,
+  ChatLaunchOptions,
+  ChatMessage,
+  ChatModelOption,
+  ChatSandboxMode,
+} from '../../api/chats';
 import { MarkdownBlock } from './MarkdownBlock';
 
 interface ChatPaneProps {
@@ -11,10 +19,15 @@ interface ChatPaneProps {
   readonly isSending: boolean;
   readonly launchOptions: ChatLaunchOptions | null;
   readonly modelOptions: readonly ChatModelOption[];
+  readonly approvalPolicyOptions: readonly ChatApprovalPolicy[];
+  readonly sandboxModeOptions: readonly ChatSandboxMode[];
   readonly isUpdatingLaunchOptions: boolean;
+  readonly approvalRequests: readonly ChatApprovalRequest[];
+  readonly submittingApprovalItemIds: readonly string[];
   readonly onSend: (text: string) => void;
   readonly onStop: () => void;
-  readonly onUpdateLaunchOptions: (model: string | null, effort: string | null) => void;
+  readonly onRespondApproval: (itemId: string, decision: ChatApprovalDecision) => void;
+  readonly onUpdateLaunchOptions: (nextLaunchOptions: ChatLaunchOptions) => void;
 }
 
 const getMessageTitle = (message: ChatMessage): string => {
@@ -41,6 +54,38 @@ const resolveDefaultEffort = (model: ChatModelOption | null): string | null => {
   return model.defaultEffort ?? model.efforts[0] ?? null;
 };
 
+const formatApprovalPolicy = (value: ChatApprovalPolicy): string => {
+  switch (value) {
+    case 'untrusted':
+      return 'Untrusted';
+    case 'on-failure':
+      return 'On Failure';
+    case 'on-request':
+      return 'On Request';
+    case 'never':
+      return 'Never';
+    default:
+      return value;
+  }
+};
+
+const formatSandboxMode = (value: ChatSandboxMode): string => {
+  switch (value) {
+    case 'read-only':
+      return 'Read Only';
+    case 'workspace-write':
+      return 'Workspace Write';
+    case 'danger-full-access':
+      return 'Danger Full Access';
+    default:
+      return value;
+  }
+};
+
+const formatApprovalKind = (kind: ChatApprovalRequest['kind']): string => {
+  return kind === 'commandExecution' ? 'Command Execution' : 'File Change';
+};
+
 /**
  * チャット履歴表示と Composer を提供する。
  * @param props ChatPane プロパティ
@@ -53,9 +98,14 @@ export const ChatPane = ({
   isSending,
   launchOptions,
   modelOptions,
+  approvalPolicyOptions,
+  sandboxModeOptions,
   isUpdatingLaunchOptions,
+  approvalRequests,
+  submittingApprovalItemIds,
   onSend,
   onStop,
+  onRespondApproval,
   onUpdateLaunchOptions,
 }: ChatPaneProps) => {
   const [draft, setDraft] = useState('');
@@ -68,11 +118,12 @@ export const ChatPane = ({
 
   const canSend = Boolean(chatId) && !isLoading && !isSending && !activeTurnId;
   const canStop = Boolean(chatId) && Boolean(activeTurnId);
-  const canEditLaunchOptions =
-    Boolean(chatId) && !isLoading && !isUpdatingLaunchOptions && modelOptions.length > 0;
+  const canEditLaunchOptions = Boolean(chatId) && !isLoading && !isUpdatingLaunchOptions;
 
   const selectedModel = launchOptions?.model ?? null;
   const selectedEffort = launchOptions?.effort ?? null;
+  const selectedApprovalPolicy = launchOptions?.approvalPolicy ?? null;
+  const selectedSandboxMode = launchOptions?.sandboxMode ?? null;
   const selectedModelValue = selectedModel ?? modelOptions[0]?.id ?? '';
   const selectedModelOption = modelOptions.find((model) => model.id === selectedModelValue) ?? null;
   const effortOptions = selectedModelOption?.efforts ?? [];
@@ -87,6 +138,9 @@ export const ChatPane = ({
   };
 
   const handleModelChange = (rawModel: string) => {
+    if (!launchOptions) {
+      return;
+    }
     const nextModel = rawModel.length > 0 ? rawModel : null;
     const model = modelOptions.find((entry) => entry.id === nextModel) ?? null;
     if (!nextModel || !model) {
@@ -97,12 +151,51 @@ export const ChatPane = ({
       selectedEffort && model.efforts.includes(selectedEffort)
         ? selectedEffort
         : resolveDefaultEffort(model);
-    onUpdateLaunchOptions(nextModel, nextEffort);
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      model: nextModel,
+      effort: nextEffort,
+    });
   };
 
   const handleEffortChange = (rawEffort: string) => {
+    if (!launchOptions) {
+      return;
+    }
     const nextEffort = rawEffort.length > 0 ? rawEffort : null;
-    onUpdateLaunchOptions(selectedModelValue || null, nextEffort);
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      model: selectedModelValue || null,
+      effort: nextEffort,
+    });
+  };
+
+  const handleApprovalPolicyChange = (rawPolicy: string) => {
+    if (!launchOptions) {
+      return;
+    }
+    const nextPolicy = rawPolicy.length > 0 ? (rawPolicy as ChatApprovalPolicy) : null;
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      approvalPolicy: nextPolicy,
+    });
+  };
+
+  const handleSandboxModeChange = (rawMode: string) => {
+    if (!launchOptions) {
+      return;
+    }
+    const nextMode = rawMode.length > 0 ? (rawMode as ChatSandboxMode) : null;
+    if (nextMode === 'danger-full-access') {
+      const accepted = window.confirm('Danger Full Access disables filesystem sandboxing. Continue?');
+      if (!accepted) {
+        return;
+      }
+    }
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      sandboxMode: nextMode,
+    });
   };
 
   return (
@@ -123,6 +216,47 @@ export const ChatPane = ({
         ) : null}
         {chatId && messages.length === 0 && !isLoading ? (
           <div className="chat-empty">No messages yet. Send your first prompt.</div>
+        ) : null}
+        {approvalRequests.length > 0 ? (
+          <section className="approval-list">
+            {approvalRequests.map((request) => {
+              const isSubmitting = submittingApprovalItemIds.includes(request.itemId);
+              return (
+                <article key={request.itemId} className="approval-card">
+                  <header className="approval-header">
+                    <strong>Approval Required</strong>
+                    <span>{formatApprovalKind(request.kind)}</span>
+                  </header>
+                  {request.reason ? <p className="approval-reason">{request.reason}</p> : null}
+                  {request.command ? (
+                    <pre className="approval-command">
+                      <code>{request.command}</code>
+                    </pre>
+                  ) : null}
+                  {request.cwd ? <div className="approval-path">cwd: {request.cwd}</div> : null}
+                  {request.grantRoot ? <div className="approval-path">grantRoot: {request.grantRoot}</div> : null}
+                  <div className="approval-actions">
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => onRespondApproval(request.itemId, 'accept')}
+                    >
+                      Yes
+                    </button>
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => onRespondApproval(request.itemId, 'decline')}
+                    >
+                      No
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </section>
         ) : null}
         {messages.map((message) => (
           <article key={message.id} className={`chat-message role-${message.role}`}>
@@ -210,6 +344,40 @@ export const ChatPane = ({
                 {effortOptions.map((effort) => (
                   <option key={effort} value={effort}>
                     {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="chat-launch-field">
+              <span>Approval Policy</span>
+              <select
+                className="chat-select"
+                value={selectedApprovalPolicy ?? ''}
+                disabled={!canEditLaunchOptions || approvalPolicyOptions.length === 0}
+                onChange={(event) => handleApprovalPolicyChange(event.target.value)}
+              >
+                <option value="">Default</option>
+                {approvalPolicyOptions.map((policy) => (
+                  <option key={policy} value={policy}>
+                    {formatApprovalPolicy(policy)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="chat-launch-field">
+              <span>Sandbox Mode</span>
+              <select
+                className="chat-select"
+                value={selectedSandboxMode ?? ''}
+                disabled={!canEditLaunchOptions || sandboxModeOptions.length === 0}
+                onChange={(event) => handleSandboxModeChange(event.target.value)}
+              >
+                <option value="">Default</option>
+                {sandboxModeOptions.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {formatSandboxMode(mode)}
                   </option>
                 ))}
               </select>

@@ -2,11 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import './App.css';
 import {
+  type ChatApprovalDecision,
+  type ChatApprovalPolicy,
+  type ChatApprovalRequest,
+  type ChatSandboxMode,
   createChat,
   getChat,
   getChatLaunchCatalog,
   interruptTurn,
   listChats,
+  respondChatApproval,
   sendChatMessage,
   updateChatLaunchOptions,
   type ChatLaunchOptions,
@@ -54,6 +59,8 @@ const EMPTY_LAUNCH_OPTIONS: ChatLaunchOptions = {
   model: null,
   effort: null,
   cwd: null,
+  approvalPolicy: null,
+  sandboxMode: null,
 };
 
 const EMPTY_TERMINAL_CATALOG: TerminalCatalog = {
@@ -104,6 +111,47 @@ const resolveEffortForModel = (
     return currentEffort;
   }
   return model.defaultEffort ?? model.efforts[0] ?? null;
+};
+
+const formatApprovalPolicyLabel = (value: ChatApprovalPolicy): string => {
+  switch (value) {
+    case 'untrusted':
+      return 'Untrusted';
+    case 'on-failure':
+      return 'On Failure';
+    case 'on-request':
+      return 'On Request';
+    case 'never':
+      return 'Never';
+    default:
+      return value;
+  }
+};
+
+const formatSandboxModeLabel = (value: ChatSandboxMode): string => {
+  switch (value) {
+    case 'read-only':
+      return 'Read Only';
+    case 'workspace-write':
+      return 'Workspace Write';
+    case 'danger-full-access':
+      return 'Danger Full Access';
+    default:
+      return value;
+  }
+};
+
+const upsertApprovalRequest = (
+  approvals: readonly ChatApprovalRequest[],
+  next: ChatApprovalRequest,
+): ChatApprovalRequest[] => {
+  const index = approvals.findIndex((entry) => entry.itemId === next.itemId);
+  if (index < 0) {
+    return [...approvals, next];
+  }
+  const copy = [...approvals];
+  copy[index] = next;
+  return copy;
 };
 
 const sortTerminalsByUpdatedAt = (terminals: readonly TerminalSummary[]): TerminalSummary[] => {
@@ -158,8 +206,12 @@ const App = () => {
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [cwdChoices, setCwdChoices] = useState<string[]>([]);
+  const [approvalPolicyOptions, setApprovalPolicyOptions] = useState<ChatApprovalPolicy[]>([]);
+  const [sandboxModeOptions, setSandboxModeOptions] = useState<ChatSandboxMode[]>([]);
   const [newChatLaunchOptions, setNewChatLaunchOptions] = useState<ChatLaunchOptions>(EMPTY_LAUNCH_OPTIONS);
   const [newChatPrompt, setNewChatPrompt] = useState('');
+  const [approvalRequests, setApprovalRequests] = useState<ChatApprovalRequest[]>([]);
+  const [submittingApprovalItemIds, setSubmittingApprovalItemIds] = useState<string[]>([]);
 
   const [terminalCatalog, setTerminalCatalog] = useState<TerminalCatalog>(EMPTY_TERMINAL_CATALOG);
   const [newTerminalProfileId, setNewTerminalProfileId] = useState<string | null>(null);
@@ -223,6 +275,8 @@ const App = () => {
     setModelOptions(catalog.models);
     setWorkspaceRoot(catalog.workspaceRoot);
     setCwdChoices(catalog.cwdChoices);
+    setApprovalPolicyOptions(catalog.approvalPolicies);
+    setSandboxModeOptions(catalog.sandboxModes);
 
     setNewChatLaunchOptions((prev) => {
       const model =
@@ -231,10 +285,20 @@ const App = () => {
           : resolveModelDefault(catalog.models);
       const effort = resolveEffortForModel(catalog.models, model, prev.effort);
       const cwd = prev.cwd && catalog.cwdChoices.includes(prev.cwd) ? prev.cwd : null;
+      const approvalPolicy =
+        prev.approvalPolicy && catalog.approvalPolicies.includes(prev.approvalPolicy)
+          ? prev.approvalPolicy
+          : (catalog.defaultApprovalPolicy ?? catalog.approvalPolicies[0] ?? null);
+      const sandboxMode =
+        prev.sandboxMode && catalog.sandboxModes.includes(prev.sandboxMode)
+          ? prev.sandboxMode
+          : (catalog.defaultSandboxMode ?? catalog.sandboxModes[0] ?? null);
       return {
         model,
         effort,
         cwd,
+        approvalPolicy,
+        sandboxMode,
       };
     });
   }, [showToast]);
@@ -366,6 +430,8 @@ const App = () => {
     (event: ChatStreamEvent) => {
       if (event.type === 'ready') {
         setActiveTurnId(event.activeTurnId);
+        setApprovalRequests(event.pendingApprovals);
+        setSubmittingApprovalItemIds([]);
         return;
       }
       if (event.type === 'turn_started') {
@@ -375,7 +441,18 @@ const App = () => {
       }
       if (event.type === 'turn_completed') {
         setActiveTurnId((prev) => (prev === event.turnId ? null : prev));
+        setApprovalRequests((prev) => prev.filter((request) => request.turnId !== event.turnId));
+        setSubmittingApprovalItemIds([]);
         setChats((prev) => touchChatSummary(prev, event.threadId, null));
+      }
+      if (event.type === 'approval_requested') {
+        setApprovalRequests((prev) => upsertApprovalRequest(prev, event.request));
+        return;
+      }
+      if (event.type === 'approval_resolved') {
+        setApprovalRequests((prev) => prev.filter((request) => request.itemId !== event.itemId));
+        setSubmittingApprovalItemIds((prev) => prev.filter((itemId) => itemId !== event.itemId));
+        return;
       }
       if (event.type === 'error') {
         showToast(event.error.message);
@@ -484,6 +561,8 @@ const App = () => {
         }
         setMessages([]);
         setActiveTurnId(null);
+        setApprovalRequests([]);
+        setSubmittingApprovalItemIds([]);
       }, 0);
       return () => {
         isCancelled = true;
@@ -496,6 +575,8 @@ const App = () => {
       if (isCancelled) {
         return;
       }
+      setApprovalRequests([]);
+      setSubmittingApprovalItemIds([]);
       void loadChatDetail(selectedChatId);
     }, 0);
     return () => {
@@ -613,19 +694,26 @@ const App = () => {
     setIsCreatePanelOpen(false);
   };
 
-  const handleUpdateSelectedLaunchOptions = async (model: string | null, effort: string | null) => {
+  const handleUpdateSelectedLaunchOptions = async (nextLaunchOptions: ChatLaunchOptions) => {
     if (!selectedChatId || !selectedChat) {
       return;
     }
     if (
-      selectedChat.launchOptions.model === model &&
-      selectedChat.launchOptions.effort === effort
+      selectedChat.launchOptions.model === nextLaunchOptions.model &&
+      selectedChat.launchOptions.effort === nextLaunchOptions.effort &&
+      selectedChat.launchOptions.approvalPolicy === nextLaunchOptions.approvalPolicy &&
+      selectedChat.launchOptions.sandboxMode === nextLaunchOptions.sandboxMode
     ) {
       return;
     }
 
     setIsUpdatingLaunchOptions(true);
-    const result = await updateChatLaunchOptions(selectedChatId, { model, effort });
+    const result = await updateChatLaunchOptions(selectedChatId, {
+      model: nextLaunchOptions.model,
+      effort: nextLaunchOptions.effort,
+      approvalPolicy: nextLaunchOptions.approvalPolicy,
+      sandboxMode: nextLaunchOptions.sandboxMode,
+    });
     setIsUpdatingLaunchOptions(false);
     const payload = result.data;
     if (!result.ok || !payload) {
@@ -681,6 +769,24 @@ const App = () => {
       return;
     }
     setActiveTurnId(null);
+  };
+
+  const handleRespondApproval = async (itemId: string, decision: ChatApprovalDecision) => {
+    if (!selectedChatId) {
+      return;
+    }
+    if (submittingApprovalItemIds.includes(itemId)) {
+      return;
+    }
+
+    setSubmittingApprovalItemIds((prev) => [...prev, itemId]);
+    const result = await respondChatApproval(selectedChatId, itemId, { decision });
+    setSubmittingApprovalItemIds((prev) => prev.filter((entry) => entry !== itemId));
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to respond approval');
+      return;
+    }
+    setApprovalRequests((prev) => prev.filter((entry) => entry.itemId !== itemId));
   };
 
   const handleKillTerminal = async () => {
@@ -960,6 +1066,66 @@ const App = () => {
                 </select>
               </label>
 
+              <label className="field-block">
+                <span>Approval Policy</span>
+                <select
+                  className="field-input"
+                  value={newChatLaunchOptions.approvalPolicy ?? ''}
+                  disabled={isLoadingCatalog || approvalPolicyOptions.length === 0}
+                  onChange={(event) => {
+                    const nextPolicy = event.target.value.length > 0 ? event.target.value : null;
+                    setNewChatLaunchOptions((prev) => {
+                      return {
+                        ...prev,
+                        approvalPolicy: nextPolicy as ChatApprovalPolicy | null,
+                      };
+                    });
+                  }}
+                >
+                  {approvalPolicyOptions.length > 0 ? <option value="">Config default</option> : null}
+                  {approvalPolicyOptions.length === 0 ? <option value="">No policies available</option> : null}
+                  {approvalPolicyOptions.map((policy) => (
+                    <option key={policy} value={policy}>
+                      {formatApprovalPolicyLabel(policy)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-block">
+                <span>Sandbox Mode</span>
+                <select
+                  className="field-input"
+                  value={newChatLaunchOptions.sandboxMode ?? ''}
+                  disabled={isLoadingCatalog || sandboxModeOptions.length === 0}
+                  onChange={(event) => {
+                    const nextMode = event.target.value.length > 0 ? event.target.value : null;
+                    if (nextMode === 'danger-full-access') {
+                      const accepted = window.confirm(
+                        'Danger Full Access disables filesystem sandboxing. Continue?',
+                      );
+                      if (!accepted) {
+                        return;
+                      }
+                    }
+                    setNewChatLaunchOptions((prev) => {
+                      return {
+                        ...prev,
+                        sandboxMode: nextMode as ChatSandboxMode | null,
+                      };
+                    });
+                  }}
+                >
+                  {sandboxModeOptions.length > 0 ? <option value="">Config default</option> : null}
+                  {sandboxModeOptions.length === 0 ? <option value="">No sandbox modes available</option> : null}
+                  {sandboxModeOptions.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {formatSandboxModeLabel(mode)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <label className="field-block new-chat-prompt-field">
                 <span>Prompt</span>
                 <textarea
@@ -1142,9 +1308,14 @@ const App = () => {
               isSending={isSending}
               launchOptions={selectedChat?.launchOptions ?? null}
               modelOptions={modelOptions}
+              approvalPolicyOptions={approvalPolicyOptions}
+              sandboxModeOptions={sandboxModeOptions}
               isUpdatingLaunchOptions={isUpdatingLaunchOptions}
+              approvalRequests={approvalRequests}
+              submittingApprovalItemIds={submittingApprovalItemIds}
               onSend={handleSend}
               onStop={handleStop}
+              onRespondApproval={handleRespondApproval}
               onUpdateLaunchOptions={handleUpdateSelectedLaunchOptions}
             />
           </div>

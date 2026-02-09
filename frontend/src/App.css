@@ -724,6 +724,65 @@
   color: var(--text-2);
 }
 
+.approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.approval-card {
+  border: 1px solid rgba(247, 185, 85, 0.42);
+  border-radius: 8px;
+  background: rgba(52, 43, 24, 0.45);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.74rem;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.approval-header strong {
+  color: var(--text-1);
+  font-size: 0.76rem;
+}
+
+.approval-reason {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-0);
+}
+
+.approval-command {
+  margin: 0;
+  border: 1px solid rgba(100, 120, 130, 0.22);
+  border-radius: 6px;
+  background: rgba(6, 8, 10, 0.72);
+  padding: 8px;
+  font-size: 0.8rem;
+  color: var(--text-0);
+  overflow-x: auto;
+}
+
+.approval-path {
+  font-size: 0.76rem;
+  color: var(--text-2);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .chat-message {
   border: 1px solid rgba(100, 120, 130, 0.24);
   border-radius: 8px;

@@ -26,6 +26,19 @@ interface RpcNotification {
 
 type NotificationListener = (notification: RpcNotification) => void;
 
+interface RpcServerRequest {
+  readonly id: string | number;
+  readonly method: string;
+  readonly params?: unknown;
+}
+
+interface PendingServerRequest {
+  readonly id: string | number;
+  readonly method: string;
+}
+
+type ServerRequestListener = (request: RpcServerRequest) => boolean;
+
 const DEFAULT_CLIENT_NAME = 'codex-dashboard';
 const DEFAULT_CLIENT_VERSION = '0.1.0';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
@@ -86,6 +99,8 @@ export class AppServerClient {
   #requestCounter = 0;
   readonly #pending = new Map<string, RpcPendingRequest>();
   readonly #notificationListeners = new Set<NotificationListener>();
+  readonly #serverRequestListeners = new Set<ServerRequestListener>();
+  readonly #pendingServerRequests = new Map<string, PendingServerRequest>();
 
   /**
    * app-server クライアントを作成する。
@@ -121,10 +136,62 @@ export class AppServerClient {
   }
 
   /**
+   * app-server からの server-initiated request を購読する。
+   * @param listener request リスナー（handled=true を返した場合は呼び出し側で応答する）
+   */
+  onServerRequest(listener: ServerRequestListener): () => void {
+    this.#serverRequestListeners.add(listener);
+    return () => {
+      this.#serverRequestListeners.delete(listener);
+    };
+  }
+
+  /**
+   * server-initiated request に result を返す。
+   * @param id request id
+   * @param result response payload
+   */
+  respondServerRequest(id: string | number, result: unknown): void {
+    const key = String(id);
+    const pending = this.#pendingServerRequests.get(key);
+    if (!pending) {
+      throw new AppServerClientError(`server request not found: ${key}`);
+    }
+    this.#pendingServerRequests.delete(key);
+    this.#writeJson({
+      id: pending.id,
+      result,
+    });
+  }
+
+  /**
+   * server-initiated request に error を返す。
+   * @param id request id
+   * @param code JSON-RPC error code
+   * @param message error message
+   */
+  rejectServerRequest(id: string | number, code: number, message: string): void {
+    const key = String(id);
+    const pending = this.#pendingServerRequests.get(key);
+    if (!pending) {
+      throw new AppServerClientError(`server request not found: ${key}`);
+    }
+    this.#pendingServerRequests.delete(key);
+    this.#writeJson({
+      id: pending.id,
+      error: {
+        code,
+        message,
+      },
+    });
+  }
+
+  /**
    * app-server プロセスを停止し、保留中リクエストを失敗させる。
    */
   dispose(): void {
     this.#rejectPending(new AppServerClientError('app-server client disposed'));
+    this.#pendingServerRequests.clear();
     if (!this.#process) {
       return;
     }
@@ -205,6 +272,7 @@ export class AppServerClient {
     this.#process = null;
     this.#stdoutBuffer = '';
     this.#rejectPending(error);
+    this.#pendingServerRequests.clear();
   }
 
   #rejectPending(error: Error): void {
@@ -247,7 +315,7 @@ export class AppServerClient {
 
     if (isRequestId(parsed.id)) {
       if (typeof parsed.method === 'string') {
-        this.#handleServerRequest(parsed.id, parsed.method);
+        this.#handleServerRequest(parsed.id, parsed.method, parsed.params);
         return;
       }
       this.#handleResponse(parsed.id, parsed);
@@ -262,14 +330,35 @@ export class AppServerClient {
     }
   }
 
-  #handleServerRequest(id: string | number, method: string): void {
-    this.#writeJson({
+  #handleServerRequest(id: string | number, method: string, params: unknown): void {
+    const requestKey = String(id);
+    this.#pendingServerRequests.set(requestKey, {
       id,
-      error: {
-        code: -32601,
-        message: `unsupported client request: ${method}`,
-      },
+      method,
     });
+
+    if (this.#serverRequestListeners.size === 0) {
+      this.rejectServerRequest(id, -32601, `unsupported client request: ${method}`);
+      return;
+    }
+
+    const request: RpcServerRequest = { id, method, params };
+    let handled = false;
+    this.#serverRequestListeners.forEach((listener) => {
+      if (handled) {
+        return;
+      }
+      try {
+        handled = listener(request);
+      } catch (error) {
+        console.error('server request listener failed', error);
+      }
+    });
+
+    if (!handled) {
+      this.rejectServerRequest(id, -32601, `unsupported client request: ${method}`);
+      return;
+    }
   }
 
   #handleResponse(id: string | number, payload: Record<string, unknown>): void {

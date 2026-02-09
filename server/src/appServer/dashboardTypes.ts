@@ -1,9 +1,15 @@
 export type ChatRole = 'user' | 'assistant' | 'tool' | 'system';
+export type ChatApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never';
+export type ChatSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+export type ChatApprovalRequestKind = 'commandExecution' | 'fileChange';
+export type ChatApprovalDecision = 'accept' | 'decline';
 
 export interface ChatLaunchOptions {
   readonly model: string | null;
   readonly effort: string | null;
   readonly cwd: string | null;
+  readonly approvalPolicy: ChatApprovalPolicy | null;
+  readonly sandboxMode: ChatSandboxMode | null;
 }
 
 export interface ChatModelOption {
@@ -19,6 +25,10 @@ export interface ChatLaunchOptionCatalog {
   readonly models: ChatModelOption[];
   readonly workspaceRoot: string | null;
   readonly cwdChoices: string[];
+  readonly approvalPolicies: ChatApprovalPolicy[];
+  readonly sandboxModes: ChatSandboxMode[];
+  readonly defaultApprovalPolicy: ChatApprovalPolicy | null;
+  readonly defaultSandboxMode: ChatSandboxMode | null;
 }
 
 export interface ChatSummary {
@@ -51,6 +61,7 @@ export interface ChatStreamReadyEvent {
   readonly type: 'ready';
   readonly threadId: string;
   readonly activeTurnId: string | null;
+  readonly pendingApprovals: ChatApprovalRequest[];
 }
 
 export interface ChatStreamTurnStartedEvent {
@@ -100,6 +111,30 @@ export interface ChatStreamErrorEvent {
   };
 }
 
+export interface ChatApprovalRequest {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly kind: ChatApprovalRequestKind;
+  readonly reason: string | null;
+  readonly command: string | null;
+  readonly cwd: string | null;
+  readonly grantRoot: string | null;
+}
+
+export interface ChatStreamApprovalRequestedEvent {
+  readonly type: 'approval_requested';
+  readonly threadId: string;
+  readonly request: ChatApprovalRequest;
+}
+
+export interface ChatStreamApprovalResolvedEvent {
+  readonly type: 'approval_resolved';
+  readonly threadId: string;
+  readonly itemId: string;
+  readonly decision: ChatApprovalDecision;
+}
+
 export type ChatStreamEvent =
   | ChatStreamReadyEvent
   | ChatStreamTurnStartedEvent
@@ -107,4 +142,6 @@ export type ChatStreamEvent =
   | ChatStreamItemStartedEvent
   | ChatStreamItemUpdatedEvent
   | ChatStreamMessageDeltaEvent
-  | ChatStreamErrorEvent;
+  | ChatStreamErrorEvent
+  | ChatStreamApprovalRequestedEvent
+  | ChatStreamApprovalResolvedEvent;
