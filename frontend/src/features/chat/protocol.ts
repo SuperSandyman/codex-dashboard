@@ -150,7 +150,7 @@ export const parseChatStreamEvent = (payload: unknown): ChatStreamEvent | null =
   }
 
   switch (payload.type) {
-    case 'ready':
+    case 'ready': {
       if (payload.activeTurnId !== null && typeof payload.activeTurnId !== 'string') {
         return null;
       }
@@ -171,6 +171,7 @@ export const parseChatStreamEvent = (payload: unknown): ChatStreamEvent | null =
         activeTurnId: payload.activeTurnId,
         pendingApprovals,
       };
+    }
     case 'turn_started':
       if (typeof payload.turnId !== 'string') {
         return null;
