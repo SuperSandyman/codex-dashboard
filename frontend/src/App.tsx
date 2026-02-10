@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 
 import './App.css';
 import {
@@ -54,6 +54,12 @@ interface ToastState {
 
 type AppView = 'chat' | 'terminal' | 'editor';
 type CreateMode = 'chat' | 'terminal';
+type SwipeDirection = 'left' | 'right';
+
+const VIEW_ORDER: readonly AppView[] = ['chat', 'terminal', 'editor'];
+const MOBILE_BREAKPOINT_MEDIA_QUERY = '(max-width: 720px)';
+const MIN_SWIPE_DISTANCE_PX = 48;
+const MAX_SWIPE_VERTICAL_DRIFT_PX = 72;
 
 const EMPTY_LAUNCH_OPTIONS: ChatLaunchOptions = {
   model: null,
@@ -160,6 +166,68 @@ const sortTerminalsByUpdatedAt = (terminals: readonly TerminalSummary[]): Termin
   });
 };
 
+const trimTrailingSlash = (value: string): string => {
+  if (value === '/') {
+    return value;
+  }
+  return value.replace(/\/+$/, '');
+};
+
+const toAbsoluteWorkspacePath = (workspaceRoot: string, relativePath: string): string => {
+  const normalizedRoot = trimTrailingSlash(workspaceRoot);
+  const normalizedRelative = relativePath.replace(/^\.\/+/, '').replace(/\/+$/, '');
+  if (normalizedRelative.length === 0) {
+    return normalizedRoot;
+  }
+  return `${normalizedRoot}/${normalizedRelative}`;
+};
+
+const toRelativeWorkspacePath = (workspaceRoot: string, absolutePath: string): string | null => {
+  const normalizedRoot = trimTrailingSlash(workspaceRoot);
+  const normalizedPath = trimTrailingSlash(absolutePath);
+  if (normalizedPath === normalizedRoot) {
+    return '';
+  }
+  if (!normalizedPath.startsWith(`${normalizedRoot}/`)) {
+    return null;
+  }
+  return normalizedPath.slice(normalizedRoot.length + 1);
+};
+
+const resolveDirectoryInputValue = (workspaceRoot: string | null, rawValue: string): string | null => {
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0 || trimmed === '.' || trimmed === './') {
+    return null;
+  }
+  if (!workspaceRoot || trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  const normalizedRelative = trimmed.replace(/^\.\/+/, '');
+  if (
+    normalizedRelative === '..' ||
+    normalizedRelative.startsWith('../') ||
+    normalizedRelative.includes('/../')
+  ) {
+    return trimmed;
+  }
+  return toAbsoluteWorkspacePath(workspaceRoot, normalizedRelative);
+};
+
+const toDirectoryOptionLabel = (workspaceRoot: string | null, cwd: string): string => {
+  if (!workspaceRoot) {
+    return cwd;
+  }
+  const relativePath = toRelativeWorkspacePath(workspaceRoot, cwd);
+  if (relativePath === null) {
+    return cwd;
+  }
+  return relativePath.length === 0 ? '.' : `./${relativePath}`;
+};
+
+const countPathDepth = (pathValue: string): number => {
+  return pathValue.split('/').filter((segment) => segment.length > 0).length;
+};
+
 /**
  * Chat と Operations Terminal を切り替えて利用するダッシュボード。
  */
@@ -212,12 +280,16 @@ const App = () => {
   const [newChatPrompt, setNewChatPrompt] = useState('');
   const [approvalRequests, setApprovalRequests] = useState<ChatApprovalRequest[]>([]);
   const [submittingApprovalItemIds, setSubmittingApprovalItemIds] = useState<string[]>([]);
+  const [sessionDirectoryOptions, setSessionDirectoryOptions] = useState<string[]>([]);
+  const [isLoadingSessionDirectories, setIsLoadingSessionDirectories] = useState(false);
+  const [sessionDirectoryError, setSessionDirectoryError] = useState<string | null>(null);
 
   const [terminalCatalog, setTerminalCatalog] = useState<TerminalCatalog>(EMPTY_TERMINAL_CATALOG);
   const [newTerminalProfileId, setNewTerminalProfileId] = useState<string | null>(null);
   const [newTerminalCwd, setNewTerminalCwd] = useState<string | null>(null);
 
   const selectedChatIdRef = useRef<string | null>(null);
+  const mobileSwitcherTouchStartRef = useRef<{ readonly x: number; readonly y: number } | null>(null);
 
   const selectedChat = useMemo(() => {
     return chats.find((chat) => chat.id === selectedChatId) ?? null;
@@ -235,6 +307,22 @@ const App = () => {
   const isEditorDirty = useMemo(() => {
     return selectedFilePath !== null && editorContent !== lastSavedContent;
   }, [editorContent, lastSavedContent, selectedFilePath]);
+
+  const chatDirectoryOptions = useMemo(() => {
+    const options = new Set(sessionDirectoryOptions);
+    if (newChatLaunchOptions.cwd) {
+      options.add(newChatLaunchOptions.cwd);
+    }
+    return [...options].sort((a, b) => a.localeCompare(b));
+  }, [newChatLaunchOptions.cwd, sessionDirectoryOptions]);
+
+  const terminalDirectoryOptions = useMemo(() => {
+    const options = new Set(sessionDirectoryOptions);
+    if (newTerminalCwd) {
+      options.add(newTerminalCwd);
+    }
+    return [...options].sort((a, b) => a.localeCompare(b));
+  }, [newTerminalCwd, sessionDirectoryOptions]);
 
   useEffect(() => {
     selectedChatIdRef.current = selectedChatId;
@@ -358,6 +446,79 @@ const App = () => {
     }
     setEditorWorkspaceRoot(result.data.workspaceRoot);
   }, [showToast]);
+
+  const refreshSessionDirectoryOptions = useCallback(
+    async (notifyOnError: boolean) => {
+      const pickerWorkspaceRoot = workspaceRoot ?? terminalCatalog.workspaceRoot;
+      if (!pickerWorkspaceRoot) {
+        setSessionDirectoryOptions([]);
+        setSessionDirectoryError(null);
+        return;
+      }
+
+      const directorySet = new Set<string>();
+      const appendSeedDirectory = (cwd: string) => {
+        const candidate = resolveDirectoryInputValue(pickerWorkspaceRoot, cwd);
+        if (!candidate || candidate === pickerWorkspaceRoot) {
+          return;
+        }
+        const relativePath = toRelativeWorkspacePath(pickerWorkspaceRoot, candidate);
+        if (relativePath === null) {
+          return;
+        }
+        directorySet.add(toAbsoluteWorkspacePath(pickerWorkspaceRoot, relativePath));
+      };
+
+      cwdChoices.forEach((cwd) => appendSeedDirectory(cwd));
+      terminalCatalog.cwdChoices.forEach((cwd) => appendSeedDirectory(cwd));
+
+      setIsLoadingSessionDirectories(true);
+      setSessionDirectoryError(null);
+      const rootTreeResult = await getEditorTree('');
+      if (!rootTreeResult.ok || !rootTreeResult.data) {
+        const fallbackOptions = [...directorySet].sort((a, b) => a.localeCompare(b));
+        setSessionDirectoryOptions(fallbackOptions);
+        setIsLoadingSessionDirectories(false);
+        const message = rootTreeResult.error?.message ?? 'Failed to load directories';
+        setSessionDirectoryError(message);
+        if (notifyOnError) {
+          showToast(message);
+        }
+        return;
+      }
+
+      const firstLevelDirectories = rootTreeResult.data.nodes
+        .filter((node) => node.kind === 'directory' && countPathDepth(node.path) <= 1)
+        .map((node) => node.path)
+        .slice(0, 30);
+
+      firstLevelDirectories.forEach((relativePath) => {
+        directorySet.add(toAbsoluteWorkspacePath(pickerWorkspaceRoot, relativePath));
+      });
+
+      const secondLevelResults = await Promise.all(
+        firstLevelDirectories.map((relativePath) => getEditorTree(relativePath)),
+      );
+      secondLevelResults.forEach((result) => {
+        if (!result.ok || !result.data) {
+          return;
+        }
+        result.data.nodes.forEach((node) => {
+          if (node.kind !== 'directory') {
+            return;
+          }
+          if (countPathDepth(node.path) <= 2) {
+            directorySet.add(toAbsoluteWorkspacePath(pickerWorkspaceRoot, node.path));
+          }
+        });
+      });
+
+      setSessionDirectoryOptions([...directorySet].sort((a, b) => a.localeCompare(b)));
+      setIsLoadingSessionDirectories(false);
+      setSessionDirectoryError(null);
+    },
+    [cwdChoices, showToast, terminalCatalog.cwdChoices, terminalCatalog.workspaceRoot, workspaceRoot],
+  );
 
   const loadEditorTree = useCallback(
     async (targetPath: string) => {
@@ -550,6 +711,13 @@ const App = () => {
       isCancelled = true;
     };
   }, [refreshChats, refreshEditorCatalog, refreshLaunchCatalog, refreshTerminalCatalog, refreshTerminals]);
+
+  useEffect(() => {
+    if (!isCreatePanelOpen) {
+      return;
+    }
+    void refreshSessionDirectoryOptions(false);
+  }, [isCreatePanelOpen, refreshSessionDirectoryOptions]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -882,6 +1050,55 @@ const App = () => {
     setActiveView(nextView);
   };
 
+  const switchViewBySwipe = (direction: SwipeDirection) => {
+    if (!window.matchMedia(MOBILE_BREAKPOINT_MEDIA_QUERY).matches) {
+      return;
+    }
+    const currentIndex = VIEW_ORDER.indexOf(activeView);
+    if (currentIndex < 0) {
+      return;
+    }
+    const offset = direction === 'left' ? 1 : -1;
+    const nextIndex = currentIndex + offset;
+    if (nextIndex < 0 || nextIndex >= VIEW_ORDER.length) {
+      return;
+    }
+    switchView(VIEW_ORDER[nextIndex]);
+  };
+
+  const handleMobileSwitcherTouchStart = (event: TouchEvent<HTMLElement>) => {
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      mobileSwitcherTouchStartRef.current = null;
+      return;
+    }
+    mobileSwitcherTouchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+    };
+  };
+
+  const handleMobileSwitcherTouchEnd = (event: TouchEvent<HTMLElement>) => {
+    const startPoint = mobileSwitcherTouchStartRef.current;
+    mobileSwitcherTouchStartRef.current = null;
+    if (!startPoint) {
+      return;
+    }
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      return;
+    }
+    const deltaX = touch.clientX - startPoint.x;
+    const deltaY = touch.clientY - startPoint.y;
+    if (Math.abs(deltaX) < MIN_SWIPE_DISTANCE_PX) {
+      return;
+    }
+    if (Math.abs(deltaY) > MAX_SWIPE_VERTICAL_DRIFT_PX || Math.abs(deltaY) > Math.abs(deltaX)) {
+      return;
+    }
+    switchViewBySwipe(deltaX < 0 ? 'left' : 'right');
+  };
+
   const handleRefresh = () => {
     void refreshChats();
     void refreshLaunchCatalog();
@@ -925,7 +1142,7 @@ const App = () => {
             New Session
           </button>
           <button
-            className="button button-secondary"
+            className="button button-secondary mobile-hidden"
             type="button"
             onClick={handleRefresh}
             disabled={isLoadingChats || isLoadingCatalog || isLoadingTerminals || isLoadingTerminalCatalog}
@@ -1041,29 +1258,87 @@ const App = () => {
 
               <label className="field-block">
                 <span>Directory</span>
-                <select
-                  className="field-input"
-                  value={newChatLaunchOptions.cwd ?? ''}
-                  disabled={isLoadingCatalog || workspaceRoot === null}
-                  onChange={(event) => {
-                    const nextCwd = event.target.value.length > 0 ? event.target.value : null;
-                    setNewChatLaunchOptions((prev) => {
-                      return {
-                        ...prev,
-                        cwd: nextCwd,
-                      };
-                    });
-                  }}
-                >
-                  <option value="">
-                    {workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'}
-                  </option>
-                  {cwdChoices.filter((cwd) => cwd !== workspaceRoot).map((cwd) => (
-                    <option key={cwd} value={cwd}>
-                      {cwd}
-                    </option>
-                  ))}
-                </select>
+                <div className="directory-picker">
+                  <input
+                    className="field-input"
+                    list="new-session-chat-directory-options"
+                    value={newChatLaunchOptions.cwd ?? ''}
+                    disabled={isLoadingCatalog || workspaceRoot === null}
+                    placeholder={
+                      workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'
+                    }
+                    onChange={(event) => {
+                      const nextCwd = resolveDirectoryInputValue(workspaceRoot, event.target.value);
+                      setNewChatLaunchOptions((prev) => {
+                        return {
+                          ...prev,
+                          cwd: nextCwd,
+                        };
+                      });
+                    }}
+                  />
+                  <datalist id="new-session-chat-directory-options">
+                    {chatDirectoryOptions.map((cwd) => (
+                      <option key={cwd} value={cwd} />
+                    ))}
+                  </datalist>
+                  <div className="directory-picker-actions">
+                    <button
+                      className="button button-secondary directory-picker-button"
+                      type="button"
+                      disabled={workspaceRoot === null}
+                      onClick={() => {
+                        setNewChatLaunchOptions((prev) => {
+                          return {
+                            ...prev,
+                            cwd: null,
+                          };
+                        });
+                      }}
+                    >
+                      Workspace default
+                    </button>
+                    <button
+                      className="button button-secondary directory-picker-button"
+                      type="button"
+                      disabled={workspaceRoot === null || isLoadingSessionDirectories}
+                      onClick={() => {
+                        void refreshSessionDirectoryOptions(true);
+                      }}
+                    >
+                      Reload list
+                    </button>
+                  </div>
+                  <details className="directory-picker-suggestions">
+                    <summary>Suggestions</summary>
+                    <div className="directory-picker-list">
+                      {chatDirectoryOptions.slice(0, 36).map((cwd) => (
+                        <button
+                          key={cwd}
+                          type="button"
+                          className={`directory-option${newChatLaunchOptions.cwd === cwd ? ' selected' : ''}`}
+                          onClick={() => {
+                            setNewChatLaunchOptions((prev) => {
+                              return {
+                                ...prev,
+                                cwd,
+                              };
+                            });
+                          }}
+                          title={cwd}
+                        >
+                          {toDirectoryOptionLabel(workspaceRoot, cwd)}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
+                  <span className="directory-picker-meta">
+                    {isLoadingSessionDirectories
+                      ? 'Loading directories...'
+                      : 'Suggestions include workspace root children and second-level directories.'}
+                    {sessionDirectoryError ? ` (${sessionDirectoryError})` : ''}
+                  </span>
+                </div>
               </label>
 
               <label className="field-block">
@@ -1161,28 +1436,77 @@ const App = () => {
 
               <label className="field-block">
                 <span>Directory</span>
-                <select
-                  className="field-input"
-                  value={newTerminalCwd ?? ''}
-                  disabled={isLoadingTerminalCatalog || terminalCatalog.workspaceRoot === null}
-                  onChange={(event) => {
-                    const nextCwd = event.target.value.length > 0 ? event.target.value : null;
-                    setNewTerminalCwd(nextCwd);
-                  }}
-                >
-                  <option value="">
-                    {terminalCatalog.workspaceRoot
-                      ? `Workspace default (${terminalCatalog.workspaceRoot})`
-                      : 'WORKSPACE_ROOT not configured'}
-                  </option>
-                  {terminalCatalog.cwdChoices
-                    .filter((cwd) => cwd !== terminalCatalog.workspaceRoot)
-                    .map((cwd) => (
-                      <option key={cwd} value={cwd}>
-                        {cwd}
-                      </option>
+                <div className="directory-picker">
+                  <input
+                    className="field-input"
+                    list="new-session-terminal-directory-options"
+                    value={newTerminalCwd ?? ''}
+                    disabled={isLoadingTerminalCatalog || terminalCatalog.workspaceRoot === null}
+                    placeholder={
+                      terminalCatalog.workspaceRoot
+                        ? `Workspace default (${terminalCatalog.workspaceRoot})`
+                        : 'WORKSPACE_ROOT not configured'
+                    }
+                    onChange={(event) => {
+                      const nextCwd = resolveDirectoryInputValue(
+                        terminalCatalog.workspaceRoot,
+                        event.target.value,
+                      );
+                      setNewTerminalCwd(nextCwd);
+                    }}
+                  />
+                  <datalist id="new-session-terminal-directory-options">
+                    {terminalDirectoryOptions.map((cwd) => (
+                      <option key={cwd} value={cwd} />
                     ))}
-                </select>
+                  </datalist>
+                  <div className="directory-picker-actions">
+                    <button
+                      className="button button-secondary directory-picker-button"
+                      type="button"
+                      disabled={terminalCatalog.workspaceRoot === null}
+                      onClick={() => {
+                        setNewTerminalCwd(terminalCatalog.workspaceRoot);
+                      }}
+                    >
+                      Workspace default
+                    </button>
+                    <button
+                      className="button button-secondary directory-picker-button"
+                      type="button"
+                      disabled={terminalCatalog.workspaceRoot === null || isLoadingSessionDirectories}
+                      onClick={() => {
+                        void refreshSessionDirectoryOptions(true);
+                      }}
+                    >
+                      Reload list
+                    </button>
+                  </div>
+                  <details className="directory-picker-suggestions">
+                    <summary>Suggestions</summary>
+                    <div className="directory-picker-list">
+                      {terminalDirectoryOptions.slice(0, 36).map((cwd) => (
+                        <button
+                          key={cwd}
+                          type="button"
+                          className={`directory-option${newTerminalCwd === cwd ? ' selected' : ''}`}
+                          onClick={() => {
+                            setNewTerminalCwd(cwd);
+                          }}
+                          title={cwd}
+                        >
+                          {toDirectoryOptionLabel(terminalCatalog.workspaceRoot, cwd)}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
+                  <span className="directory-picker-meta">
+                    {isLoadingSessionDirectories
+                      ? 'Loading directories...'
+                      : 'Suggestions include workspace root children and second-level directories.'}
+                    {sessionDirectoryError ? ` (${sessionDirectoryError})` : ''}
+                  </span>
+                </div>
               </label>
 
               <div className="field-block">
@@ -1298,7 +1622,11 @@ const App = () => {
           ) : null}
         </aside>
 
-        <section className="main-panel">
+        <section
+          className="main-panel"
+          onTouchStart={handleMobileSwitcherTouchStart}
+          onTouchEnd={handleMobileSwitcherTouchEnd}
+        >
           <div className={`view-pane${activeView === 'chat' ? ' active' : ''}`}>
             <ChatPane
               chatId={selectedChatId}
@@ -1326,17 +1654,9 @@ const App = () => {
               status={selectedTerminal?.status ?? null}
               onStreamEvent={handleTerminalStreamEvent}
               onToast={showToast}
+              onKill={handleKillTerminal}
+              isKillDisabled={!selectedTerminalId || selectedTerminal?.status !== 'running'}
             />
-            <div className="terminal-pane-actions">
-              <button
-                className="button button-secondary"
-                type="button"
-                onClick={handleKillTerminal}
-                disabled={!selectedTerminalId || selectedTerminal?.status !== 'running'}
-              >
-                Kill Terminal
-              </button>
-            </div>
           </div>
 
           <div className={`view-pane${activeView === 'editor' ? ' active' : ''}`}>

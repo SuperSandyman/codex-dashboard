@@ -12,6 +12,8 @@ interface TerminalPaneProps {
   readonly status: TerminalStatus | null;
   readonly onStreamEvent: (event: TerminalStreamEvent) => void;
   readonly onToast: (message: string) => void;
+  readonly onKill: () => void;
+  readonly isKillDisabled: boolean;
 }
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected';
@@ -25,7 +27,14 @@ const buildTerminalWsUrl = (terminalId: string): string => {
  * xterm.js ベースの Operations Terminal ペイン。
  * @param props TerminalPane プロパティ
  */
-export const TerminalPane = ({ terminalId, status, onStreamEvent, onToast }: TerminalPaneProps) => {
+export const TerminalPane = ({
+  terminalId,
+  status,
+  onStreamEvent,
+  onToast,
+  onKill,
+  isKillDisabled,
+}: TerminalPaneProps) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -191,6 +200,15 @@ export const TerminalPane = ({ terminalId, status, onStreamEvent, onToast }: Ter
             disabled={!terminalId || connectionState === 'connecting'}
           >
             Reconnect
+          </button>
+          <button
+            className="button button-secondary terminal-kill mobile-hidden"
+            type="button"
+            onClick={onKill}
+            disabled={isKillDisabled}
+            aria-label="Kill terminal process"
+          >
+            Kill Terminal
           </button>
         </div>
       </div>
