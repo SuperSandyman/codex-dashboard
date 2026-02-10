@@ -9,7 +9,9 @@ import type {
   ChatModelOption,
   ChatSandboxMode,
 } from '../../api/chats';
+import { CommandExecutionBlock } from './CommandExecutionBlock';
 import { MarkdownBlock } from './MarkdownBlock';
+import { parseCommandExecutionText } from './parseCommandExecutionText';
 
 interface ChatPaneProps {
   readonly chatId: string | null;
@@ -45,6 +47,10 @@ const getMessageTitle = (message: ChatMessage): string => {
 
 const isReasoningMessage = (message: ChatMessage): boolean => {
   return message.kind === 'reasoning';
+};
+
+const isCommandExecutionMessage = (message: ChatMessage): boolean => {
+  return message.kind === 'commandExecution';
 };
 
 const resolveDefaultEffort = (model: ChatModelOption | null): string | null => {
@@ -258,23 +264,37 @@ export const ChatPane = ({
             })}
           </section>
         ) : null}
-        {messages.map((message) => (
-          <article key={message.id} className={`chat-message role-${message.role}`}>
-            <header className="chat-message-header">
-              <span>{getMessageTitle(message)}</span>
-              <span className="chat-message-kind">{message.kind}</span>
-            </header>
-            {isReasoningMessage(message) ? (
-              <details className="reasoning-details">
-                <summary className="reasoning-summary">Reasoning (click to expand)</summary>
+        {messages.map((message) => {
+          const parsedCommandExecution = isCommandExecutionMessage(message)
+            ? parseCommandExecutionText(message.text)
+            : null;
+          return (
+            <article key={message.id} className={`chat-message role-${message.role}`}>
+              <header className="chat-message-header">
+                <span>{getMessageTitle(message)}</span>
+                <span className="chat-message-kind">{message.kind}</span>
+              </header>
+              {isReasoningMessage(message) ? (
+                <details className="reasoning-details">
+                  <summary className="reasoning-summary">Reasoning (click to expand)</summary>
+                  <MarkdownBlock text={message.text || ' '} />
+                </details>
+              ) : parsedCommandExecution ? (
+                <CommandExecutionBlock
+                  command={parsedCommandExecution.command}
+                  output={parsedCommandExecution.output}
+                  exitCode={parsedCommandExecution.exitCode}
+                  status={message.status}
+                />
+              ) : (
                 <MarkdownBlock text={message.text || ' '} />
-              </details>
-            ) : (
-              <MarkdownBlock text={message.text || ' '} />
-            )}
-            {message.status ? <div className="chat-message-status">{message.status}</div> : null}
-          </article>
-        ))}
+              )}
+              {message.status && !parsedCommandExecution ? (
+                <div className="chat-message-status">{message.status}</div>
+              ) : null}
+            </article>
+          );
+        })}
         <div ref={messageEndRef} />
       </div>
 
@@ -306,6 +326,7 @@ export const ChatPane = ({
             type="button"
             onClick={() => setIsComposerSettingsOpen((prev) => !prev)}
             aria-expanded={isComposerSettingsOpen}
+            aria-label={isComposerSettingsOpen ? 'Hide chat settings' : 'Show chat settings'}
           >
             {isComposerSettingsOpen ? 'Hide Settings' : 'Show Settings'}
           </button>

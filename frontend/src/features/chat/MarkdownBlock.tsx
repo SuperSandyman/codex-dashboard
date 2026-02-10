@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 interface MarkdownBlockProps {
   readonly text: string;
@@ -150,6 +150,8 @@ const parseFenceBlock = (
   };
 };
 
+type CopyState = 'idle' | 'copied' | 'failed';
+
 /**
  * チャット本文向けの軽量 Markdown レンダラ。
  * - 見出し
@@ -162,7 +164,33 @@ const parseFenceBlock = (
 export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
   const lines = text.split('\n');
   const blocks: ReactNode[] = [];
+  const [copyStateByBlock, setCopyStateByBlock] = useState<Record<string, CopyState>>({});
   let index = 0;
+
+  useEffect(() => {
+    if (Object.keys(copyStateByBlock).length === 0) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setCopyStateByBlock({});
+    }, 1800);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [copyStateByBlock]);
+
+  const handleCopyFence = async (blockKey: string, code: string) => {
+    if (!window.isSecureContext || !navigator.clipboard) {
+      setCopyStateByBlock((prev) => ({ ...prev, [blockKey]: 'failed' }));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopyStateByBlock((prev) => ({ ...prev, [blockKey]: 'copied' }));
+    } catch {
+      setCopyStateByBlock((prev) => ({ ...prev, [blockKey]: 'failed' }));
+    }
+  };
 
   while (index < lines.length) {
     const line = lines[index];
@@ -174,10 +202,29 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
 
     if (line.startsWith('```')) {
       const fence = parseFenceBlock(lines, index);
+      const blockKey = `code-${index}`;
+      const copyState = copyStateByBlock[blockKey] ?? 'idle';
+      const buttonLabel =
+        copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy';
       blocks.push(
-        <pre key={`code-${index}`} className="md-code-block">
-          <code data-lang={fence.lang || undefined}>{fence.code}</code>
-        </pre>,
+        <div key={blockKey} className="md-code-block">
+          <div className="md-code-toolbar">
+            <span className="md-code-lang">{fence.lang || 'text'}</span>
+            <button
+              type="button"
+              className="button button-secondary md-code-copy"
+              onClick={() => {
+                void handleCopyFence(blockKey, fence.code);
+              }}
+              aria-label="Copy code block"
+            >
+              {buttonLabel}
+            </button>
+          </div>
+          <pre className="md-code-content">
+            <code data-lang={fence.lang || undefined}>{fence.code}</code>
+          </pre>
+        </div>,
       );
       index = fence.endIndex + 1;
       continue;
