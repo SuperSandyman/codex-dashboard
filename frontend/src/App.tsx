@@ -52,6 +52,17 @@ interface ToastState {
   readonly message: string;
 }
 
+interface SessionDirectoryRequest {
+  readonly workspaceRoot: string;
+  readonly promise: Promise<readonly string[]>;
+}
+
+interface SessionDirectoryCache {
+  readonly workspaceRoot: string;
+  readonly fetchedAt: number;
+  readonly directories: readonly string[];
+}
+
 type AppView = 'chat' | 'terminal' | 'editor';
 type CreateMode = 'chat' | 'terminal';
 type SwipeDirection = 'left' | 'right';
@@ -60,6 +71,7 @@ const VIEW_ORDER: readonly AppView[] = ['chat', 'terminal', 'editor'];
 const MOBILE_BREAKPOINT_MEDIA_QUERY = '(max-width: 720px)';
 const MIN_SWIPE_DISTANCE_PX = 48;
 const MAX_SWIPE_VERTICAL_DRIFT_PX = 72;
+const SESSION_DIRECTORY_CACHE_TTL_MS = 60_000;
 
 const EMPTY_LAUNCH_OPTIONS: ChatLaunchOptions = {
   model: null,
@@ -290,6 +302,9 @@ const App = () => {
 
   const selectedChatIdRef = useRef<string | null>(null);
   const mobileSwitcherTouchStartRef = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  const sessionDirectoryInFlightRef = useRef<SessionDirectoryRequest | null>(null);
+  const sessionDirectoryCacheRef = useRef<SessionDirectoryCache | null>(null);
+  const sessionDirectoryRequestIdRef = useRef(0);
 
   const selectedChat = useMemo(() => {
     return chats.find((chat) => chat.id === selectedChatId) ?? null;
@@ -448,9 +463,11 @@ const App = () => {
   }, [showToast]);
 
   const refreshSessionDirectoryOptions = useCallback(
-    async (notifyOnError: boolean) => {
+    async (notifyOnError: boolean, forceReload = false) => {
       const pickerWorkspaceRoot = workspaceRoot ?? terminalCatalog.workspaceRoot;
       if (!pickerWorkspaceRoot) {
+        sessionDirectoryInFlightRef.current = null;
+        sessionDirectoryCacheRef.current = null;
         setSessionDirectoryOptions([]);
         setSessionDirectoryError(null);
         return;
@@ -472,50 +489,106 @@ const App = () => {
       cwdChoices.forEach((cwd) => appendSeedDirectory(cwd));
       terminalCatalog.cwdChoices.forEach((cwd) => appendSeedDirectory(cwd));
 
+      const mergeOptions = (directories: readonly string[]): string[] => {
+        const merged = new Set(directorySet);
+        directories.forEach((directory) => merged.add(directory));
+        return [...merged].sort((a, b) => a.localeCompare(b));
+      };
+
+      const cached = sessionDirectoryCacheRef.current;
+      const isCacheFresh =
+        cached &&
+        cached.workspaceRoot === pickerWorkspaceRoot &&
+        Date.now() - cached.fetchedAt < SESSION_DIRECTORY_CACHE_TTL_MS;
+      if (!forceReload && isCacheFresh) {
+        setSessionDirectoryOptions(mergeOptions(cached.directories));
+        setSessionDirectoryError(null);
+        setIsLoadingSessionDirectories(false);
+        return;
+      }
+
       setIsLoadingSessionDirectories(true);
       setSessionDirectoryError(null);
-      const rootTreeResult = await getEditorTree('');
-      if (!rootTreeResult.ok || !rootTreeResult.data) {
-        const fallbackOptions = [...directorySet].sort((a, b) => a.localeCompare(b));
-        setSessionDirectoryOptions(fallbackOptions);
-        setIsLoadingSessionDirectories(false);
-        const message = rootTreeResult.error?.message ?? 'Failed to load directories';
+
+      let fetchPromise: Promise<readonly string[]>;
+      const inFlight = sessionDirectoryInFlightRef.current;
+      if (inFlight && inFlight.workspaceRoot === pickerWorkspaceRoot) {
+        fetchPromise = inFlight.promise;
+      } else {
+        fetchPromise = (async (): Promise<readonly string[]> => {
+          const rootTreeResult = await getEditorTree('');
+          if (!rootTreeResult.ok || !rootTreeResult.data) {
+            throw new Error(rootTreeResult.error?.message ?? 'Failed to load directories');
+          }
+
+          const firstLevelDirectories = rootTreeResult.data.nodes
+            .filter((node) => node.kind === 'directory' && countPathDepth(node.path) <= 1)
+            .map((node) => node.path)
+            .slice(0, 30);
+
+          const treeDirectories = new Set<string>();
+          firstLevelDirectories.forEach((relativePath) => {
+            treeDirectories.add(toAbsoluteWorkspacePath(pickerWorkspaceRoot, relativePath));
+          });
+
+          const secondLevelResults = await Promise.all(
+            firstLevelDirectories.map((relativePath) => getEditorTree(relativePath)),
+          );
+          secondLevelResults.forEach((result) => {
+            if (!result.ok || !result.data) {
+              return;
+            }
+            result.data.nodes.forEach((node) => {
+              if (node.kind !== 'directory') {
+                return;
+              }
+              if (countPathDepth(node.path) <= 2) {
+                treeDirectories.add(toAbsoluteWorkspacePath(pickerWorkspaceRoot, node.path));
+              }
+            });
+          });
+          return [...treeDirectories].sort((a, b) => a.localeCompare(b));
+        })();
+        sessionDirectoryInFlightRef.current = {
+          workspaceRoot: pickerWorkspaceRoot,
+          promise: fetchPromise,
+        };
+      }
+
+      const requestId = sessionDirectoryRequestIdRef.current + 1;
+      sessionDirectoryRequestIdRef.current = requestId;
+      try {
+        const loadedDirectories = await fetchPromise;
+        if (sessionDirectoryRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        sessionDirectoryCacheRef.current = {
+          workspaceRoot: pickerWorkspaceRoot,
+          fetchedAt: Date.now(),
+          directories: loadedDirectories,
+        };
+        setSessionDirectoryOptions(mergeOptions(loadedDirectories));
+        setSessionDirectoryError(null);
+      } catch (error) {
+        if (sessionDirectoryRequestIdRef.current !== requestId) {
+          return;
+        }
+        setSessionDirectoryOptions(mergeOptions([]));
+        const message = error instanceof Error ? error.message : 'Failed to load directories';
         setSessionDirectoryError(message);
         if (notifyOnError) {
           showToast(message);
         }
-        return;
-      }
-
-      const firstLevelDirectories = rootTreeResult.data.nodes
-        .filter((node) => node.kind === 'directory' && countPathDepth(node.path) <= 1)
-        .map((node) => node.path)
-        .slice(0, 30);
-
-      firstLevelDirectories.forEach((relativePath) => {
-        directorySet.add(toAbsoluteWorkspacePath(pickerWorkspaceRoot, relativePath));
-      });
-
-      const secondLevelResults = await Promise.all(
-        firstLevelDirectories.map((relativePath) => getEditorTree(relativePath)),
-      );
-      secondLevelResults.forEach((result) => {
-        if (!result.ok || !result.data) {
-          return;
+      } finally {
+        if (sessionDirectoryRequestIdRef.current === requestId) {
+          setIsLoadingSessionDirectories(false);
         }
-        result.data.nodes.forEach((node) => {
-          if (node.kind !== 'directory') {
-            return;
-          }
-          if (countPathDepth(node.path) <= 2) {
-            directorySet.add(toAbsoluteWorkspacePath(pickerWorkspaceRoot, node.path));
-          }
-        });
-      });
-
-      setSessionDirectoryOptions([...directorySet].sort((a, b) => a.localeCompare(b)));
-      setIsLoadingSessionDirectories(false);
-      setSessionDirectoryError(null);
+        const latestInFlight = sessionDirectoryInFlightRef.current;
+        if (latestInFlight?.workspaceRoot === pickerWorkspaceRoot && latestInFlight.promise === fetchPromise) {
+          sessionDirectoryInFlightRef.current = null;
+        }
+      }
     },
     [cwdChoices, showToast, terminalCatalog.cwdChoices, terminalCatalog.workspaceRoot, workspaceRoot],
   );
@@ -1303,7 +1376,7 @@ const App = () => {
                       type="button"
                       disabled={workspaceRoot === null || isLoadingSessionDirectories}
                       onClick={() => {
-                        void refreshSessionDirectoryOptions(true);
+                        void refreshSessionDirectoryOptions(true, true);
                       }}
                     >
                       Reload list
@@ -1476,7 +1549,7 @@ const App = () => {
                       type="button"
                       disabled={terminalCatalog.workspaceRoot === null || isLoadingSessionDirectories}
                       onClick={() => {
-                        void refreshSessionDirectoryOptions(true);
+                        void refreshSessionDirectoryOptions(true, true);
                       }}
                     >
                       Reload list
