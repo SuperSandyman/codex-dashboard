@@ -57,7 +57,13 @@ export const EditorPane = ({
   return (
     <div className="editor-pane">
       <div className="editor-pane-header">
-        <div className="editor-pane-title">{filePath}</div>
+        <div
+          className="editor-pane-title"
+          onTouchStart={(event) => event.stopPropagation()}
+          onTouchEnd={(event) => event.stopPropagation()}
+        >
+          <span className="editor-pane-title-text">{filePath}</span>
+        </div>
         <div className="editor-pane-actions">
           <span className={`editor-dirty-badge${isDirty ? ' dirty' : ''}`}>
             {isDirty ? 'Unsaved' : 'Saved'}

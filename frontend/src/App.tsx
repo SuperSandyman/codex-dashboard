@@ -1060,7 +1060,6 @@ const App = () => {
 
   const handleOpenEditorDirectory = (targetPath: string) => {
     void loadEditorTree(targetPath);
-    setIsMenuOpen(false);
   };
 
   const handleSelectEditorFile = (targetPath: string) => {
