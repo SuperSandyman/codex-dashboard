@@ -21,6 +21,8 @@ import type {
   ChatSandboxMode,
   ChatStreamEvent,
   ChatSummary,
+  ChatUserInputRequest,
+  ChatUserInputResponse,
 } from './dashboardTypes.js';
 import {
   isChatRole,
@@ -34,6 +36,7 @@ import {
   parseNotificationItem,
   parseRecord,
   parseStringField,
+  parseToolRequestUserInputRequest,
   parseThreadListResult,
   parseThreadReadResult,
   parseThreadStartResult,
@@ -91,6 +94,11 @@ interface ChatPolicyCache {
 interface PendingApproval {
   readonly requestId: string | number;
   readonly request: ChatApprovalRequest;
+}
+
+interface PendingUserInputRequest {
+  readonly requestId: string | number;
+  readonly request: ChatUserInputRequest;
 }
 
 interface ChatLaunchValidationInput {
@@ -162,6 +170,7 @@ export class AppServerChatBridge {
   readonly #activeTurnByThread = new Map<string, string>();
   readonly #launchOptionsByThread = new Map<string, ChatLaunchOptions>();
   readonly #pendingApprovalsByThread = new Map<string, Map<string, PendingApproval>>();
+  readonly #pendingUserInputsByThread = new Map<string, Map<string, PendingUserInputRequest>>();
   #modelCache: ChatModelCache | null = null;
   #policyCache: ChatPolicyCache | null = null;
   #workspaceRootRealPath: string | null | undefined = undefined;
@@ -199,6 +208,7 @@ export class AppServerChatBridge {
     this.#activeTurnByThread.clear();
     this.#launchOptionsByThread.clear();
     this.#pendingApprovalsByThread.clear();
+    this.#pendingUserInputsByThread.clear();
     this.#modelCache = null;
     this.#policyCache = null;
     this.#client.dispose();
@@ -429,6 +439,42 @@ export class AppServerChatBridge {
   }
 
   /**
+   * 保留中の user input 要求へ回答を返す。
+   * @param threadId thread ID
+   * @param itemId 対象 item ID
+   * @param response 回答 payload
+   */
+  respondUserInput(
+    threadId: string,
+    itemId: string,
+    response: ChatUserInputResponse,
+  ): { readonly itemId: string } {
+    const bucket = this.#pendingUserInputsByThread.get(threadId);
+    const pending = bucket?.get(itemId);
+    if (!pending) {
+      throw new ChatBridgeError('user_input_not_found', 404, `入力要求が見つかりません: ${itemId}`);
+    }
+
+    try {
+      this.#client.respondServerRequest(pending.requestId, response);
+    } catch (error) {
+      throw this.#mapBridgeError(error, 'user_input_respond_failed', '入力応答の送信に失敗しました。');
+    }
+
+    bucket?.delete(itemId);
+    if (bucket && bucket.size === 0) {
+      this.#pendingUserInputsByThread.delete(threadId);
+    }
+
+    this.#broadcast(threadId, {
+      type: 'user_input_resolved',
+      threadId,
+      itemId,
+    });
+    return { itemId };
+  }
+
+  /**
    * 指定 thread のストリームイベント購読へ WebSocket を紐づける。
    * @param threadId thread ID
    * @param ws 接続済み WebSocket
@@ -446,6 +492,7 @@ export class AppServerChatBridge {
       threadId,
       activeTurnId: this.#activeTurnByThread.get(threadId) ?? null,
       pendingApprovals: this.#listPendingApprovals(threadId),
+      pendingUserInputRequests: this.#listPendingUserInputs(threadId),
     });
 
     ws.on('close', () => {
@@ -928,10 +975,16 @@ export class AppServerChatBridge {
       case 'item/plan/delta':
         this.#handleDeltaEvent(payload, 'system', 'plan');
         return;
+      case 'turn/plan/updated':
+      case 'thread/tokenUsage/updated':
+      case 'item/reasoning/summaryPartAdded':
+        this.#logIgnoredNotification(method, payload);
+        return;
       case 'error':
         this.#handleTurnError(payload);
         return;
       default:
+        this.#logIgnoredNotification(method, payload);
         return;
     }
   }
@@ -964,6 +1017,7 @@ export class AppServerChatBridge {
       this.#activeTurnByThread.delete(threadId);
     }
     this.#clearPendingApprovalsForTurn(threadId, turnId);
+    this.#clearPendingUserInputsForTurn(threadId, turnId);
     this.#broadcast(threadId, {
       type: 'turn_completed',
       threadId,
@@ -1026,6 +1080,7 @@ export class AppServerChatBridge {
     }
     if (turnId) {
       this.#clearPendingApprovalsForTurn(threadId, turnId);
+      this.#clearPendingUserInputsForTurn(threadId, turnId);
     }
     const errorRecord = parseRecord(payload.error);
     const message = errorRecord ? parseStringField(errorRecord, 'message') : null;
@@ -1059,8 +1114,26 @@ export class AppServerChatBridge {
         this.#queueApprovalRequest(id, request);
         return true;
       }
+      case 'item/tool/requestUserInput': {
+        const request = parseToolRequestUserInputRequest(params);
+        if (!request) {
+          this.#client.rejectServerRequest(id, -32602, 'invalid tool requestUserInput params');
+          return true;
+        }
+        this.#queueUserInputRequest(id, request);
+        return true;
+      }
+      case 'item/tool/call': {
+        this.#client.rejectServerRequest(
+          id,
+          -32004,
+          'item/tool/call is not supported by codex-dashboard',
+        );
+        return true;
+      }
       default:
-        return false;
+        this.#client.rejectServerRequest(id, -32004, `unsupported app-server request: ${method}`);
+        return true;
     }
   }
 
@@ -1081,8 +1154,33 @@ export class AppServerChatBridge {
     });
   }
 
+  #queueUserInputRequest(id: string | number, request: ChatUserInputRequest): void {
+    let bucket = this.#pendingUserInputsByThread.get(request.threadId);
+    if (!bucket) {
+      bucket = new Map<string, PendingUserInputRequest>();
+      this.#pendingUserInputsByThread.set(request.threadId, bucket);
+    }
+    bucket.set(request.itemId, {
+      requestId: id,
+      request,
+    });
+    this.#broadcast(request.threadId, {
+      type: 'user_input_requested',
+      threadId: request.threadId,
+      request,
+    });
+  }
+
   #listPendingApprovals(threadId: string): ChatApprovalRequest[] {
     const bucket = this.#pendingApprovalsByThread.get(threadId);
+    if (!bucket) {
+      return [];
+    }
+    return [...bucket.values()].map((entry) => entry.request);
+  }
+
+  #listPendingUserInputs(threadId: string): ChatUserInputRequest[] {
+    const bucket = this.#pendingUserInputsByThread.get(threadId);
     if (!bucket) {
       return [];
     }
@@ -1105,6 +1203,25 @@ export class AppServerChatBridge {
     });
     if (bucket.size === 0) {
       this.#pendingApprovalsByThread.delete(threadId);
+    }
+  }
+
+  #clearPendingUserInputsForTurn(threadId: string, turnId: string): void {
+    const bucket = this.#pendingUserInputsByThread.get(threadId);
+    if (!bucket) {
+      return;
+    }
+    const matchedItemIds: string[] = [];
+    bucket.forEach((pending, itemId) => {
+      if (pending.request.turnId === turnId) {
+        matchedItemIds.push(itemId);
+      }
+    });
+    matchedItemIds.forEach((itemId) => {
+      bucket.delete(itemId);
+    });
+    if (bucket.size === 0) {
+      this.#pendingUserInputsByThread.delete(threadId);
     }
   }
 
@@ -1160,6 +1277,15 @@ export class AppServerChatBridge {
       default:
         return null;
     }
+  }
+
+  #logIgnoredNotification(method: string, payload: Record<string, unknown>): void {
+    console.info('ignored app-server notification', {
+      method,
+      threadId: parseStringField(payload, 'threadId'),
+      turnId: parseStringField(payload, 'turnId'),
+      itemId: parseStringField(payload, 'itemId'),
+    });
   }
 
   async #getPolicyCatalog(forceRefresh: boolean): Promise<ChatPolicyCatalog> {

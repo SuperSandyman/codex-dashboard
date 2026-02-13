@@ -44,6 +44,14 @@ interface RespondApprovalRequestBody {
   readonly decision: 'accept' | 'decline';
 }
 
+interface UserInputAnswerBody {
+  readonly answers: string[];
+}
+
+interface RespondUserInputRequestBody {
+  readonly answers: Record<string, UserInputAnswerBody>;
+}
+
 interface CreateTerminalRequestBody {
   readonly profile: string | null;
   readonly cwd: string | null;
@@ -219,6 +227,54 @@ const parseRespondApprovalBody = (value: unknown): RespondApprovalRequestBody | 
     return { decision: 'decline' };
   }
   return { code: 'invalid_payload', message: 'decision は accept または decline を指定してください。' };
+};
+
+const parseRespondUserInputBody = (value: unknown): RespondUserInputRequestBody | ApiError => {
+  if (!isRecord(value)) {
+    return {
+      code: 'invalid_payload',
+      message: 'answers を含む JSON が必要です。',
+    };
+  }
+  const answersRecord = value.answers;
+  if (!isRecord(answersRecord)) {
+    return {
+      code: 'invalid_payload',
+      message: 'answers を含む JSON が必要です。',
+    };
+  }
+
+  const answers: Record<string, UserInputAnswerBody> = {};
+  for (const [questionId, rawAnswer] of Object.entries(answersRecord)) {
+    if (!isRecord(rawAnswer)) {
+      return {
+        code: 'invalid_payload',
+        message: `answers.${questionId} は { answers: string[] } で指定してください。`,
+      };
+    }
+    const rawEntries = rawAnswer.answers;
+    if (!Array.isArray(rawEntries)) {
+      return {
+        code: 'invalid_payload',
+        message: `answers.${questionId} は { answers: string[] } で指定してください。`,
+      };
+    }
+
+    const entries: string[] = [];
+    for (const entry of rawEntries) {
+      if (typeof entry !== 'string') {
+        return {
+          code: 'invalid_payload',
+          message: `answers.${questionId}.answers は string 配列で指定してください。`,
+        };
+      }
+      entries.push(entry);
+    }
+
+    answers[questionId] = { answers: entries };
+  }
+
+  return { answers };
 };
 
 const parseInterruptBody = (value: unknown): InterruptRequestBody | ApiError => {
@@ -550,6 +606,27 @@ app.post('/api/chats/:id/approvals/:itemId', async (c) => {
 
   try {
     const result = chatBridge.respondApproval(c.req.param('id'), c.req.param('itemId'), parsed.decision);
+    return c.json(result);
+  } catch (error) {
+    return respondBridgeError(error);
+  }
+});
+
+app.post('/api/chats/:id/user-input/:itemId', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseRespondUserInputBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const result = chatBridge.respondUserInput(c.req.param('id'), c.req.param('itemId'), parsed);
     return c.json(result);
   } catch (error) {
     return respondBridgeError(error);

@@ -855,6 +855,56 @@
   gap: 8px;
 }
 
+.user-input-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.user-input-card {
+  border: 1px solid rgba(78, 225, 160, 0.42);
+  border-radius: 8px;
+  background: rgba(20, 58, 46, 0.35);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.user-input-question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.user-input-question-header {
+  font-size: 0.76rem;
+  color: var(--text-1);
+}
+
+.user-input-question-text {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-0);
+}
+
+.user-input-select {
+  max-width: 100%;
+}
+
+.user-input-text {
+  min-height: auto;
+  resize: none;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+
+.user-input-option-description {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-2);
+}
+
 .chat-message {
   border: 1px solid rgba(100, 120, 130, 0.24);
   border-radius: 8px;

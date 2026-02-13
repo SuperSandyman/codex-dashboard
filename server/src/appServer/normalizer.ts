@@ -7,6 +7,7 @@ import type {
   ChatRole,
   ChatSandboxMode,
   ChatSummary,
+  ChatUserInputRequest,
 } from './dashboardTypes.js';
 
 interface AppServerThreadListResult {
@@ -802,6 +803,21 @@ const parseStringList = <T extends string>(
   return [...unique];
 };
 
+const readPreferredConfigValue = (
+  config: Record<string, unknown>,
+  snakeCaseKey: string,
+  camelCaseKey: string,
+): unknown => {
+  // v2 仕様の snake_case を優先し、旧実装の camelCase は後方互換としてのみ読む。
+  if (snakeCaseKey in config) {
+    return config[snakeCaseKey];
+  }
+  if (camelCaseKey in config) {
+    return config[camelCaseKey];
+  }
+  return undefined;
+};
+
 /**
  * config/read 応答からデフォルト approval/sandbox 設定を取り出す。
  * @param value config/read RPC result
@@ -816,8 +832,8 @@ export const parseConfigDefaults = (value: unknown): ConfigDefaults | null => {
     return null;
   }
 
-  const approvalPolicyRaw = config.approvalPolicy;
-  const sandboxModeRaw = config.sandboxMode;
+  const approvalPolicyRaw = readPreferredConfigValue(config, 'approval_policy', 'approvalPolicy');
+  const sandboxModeRaw = readPreferredConfigValue(config, 'sandbox_mode', 'sandboxMode');
   const approvalPolicy =
     approvalPolicyRaw === undefined || approvalPolicyRaw === null
       ? null
@@ -827,13 +843,85 @@ export const parseConfigDefaults = (value: unknown): ConfigDefaults | null => {
       ? null
       : normalizeChatSandboxMode(sandboxModeRaw);
 
-  if ((approvalPolicyRaw !== undefined && approvalPolicyRaw !== null && !approvalPolicy) || (sandboxModeRaw !== undefined && sandboxModeRaw !== null && !sandboxMode)) {
+  if (
+    (approvalPolicyRaw !== undefined && approvalPolicyRaw !== null && !approvalPolicy) ||
+    (sandboxModeRaw !== undefined && sandboxModeRaw !== null && !sandboxMode)
+  ) {
     return null;
   }
 
   return {
     approvalPolicy,
     sandboxMode,
+  };
+};
+
+const parseToolRequestUserInputOption = (
+  value: unknown,
+): { readonly label: string; readonly description: string } | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const label = asString(value.label);
+  const description = asString(value.description);
+  if (!label || !description) {
+    return null;
+  }
+  return {
+    label,
+    description,
+  };
+};
+
+const parseToolRequestUserInputQuestion = (
+  value: unknown,
+): {
+  readonly id: string;
+  readonly header: string;
+  readonly question: string;
+  readonly isOther: boolean;
+  readonly isSecret: boolean;
+  readonly options: { readonly label: string; readonly description: string }[] | null;
+} | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = asString(value.id);
+  const header = asString(value.header);
+  const question = asString(value.question);
+  if (!id || !header || !question) {
+    return null;
+  }
+
+  const isOther = value.isOther === undefined ? false : value.isOther;
+  const isSecret = value.isSecret === undefined ? false : value.isSecret;
+  if (typeof isOther !== 'boolean' || typeof isSecret !== 'boolean') {
+    return null;
+  }
+
+  const optionsRaw = value.options;
+  let options: { readonly label: string; readonly description: string }[] | null = null;
+  if (optionsRaw !== undefined && optionsRaw !== null) {
+    if (!Array.isArray(optionsRaw)) {
+      return null;
+    }
+    options = [];
+    for (const entry of optionsRaw) {
+      const parsed = parseToolRequestUserInputOption(entry);
+      if (!parsed) {
+        return null;
+      }
+      options.push(parsed);
+    }
+  }
+
+  return {
+    id,
+    header,
+    question,
+    isOther,
+    isSecret,
+    options,
   };
 };
 
@@ -973,5 +1061,35 @@ export const parseFileChangeApprovalRequest = (value: unknown): ChatApprovalRequ
     command: null,
     cwd: null,
     grantRoot,
+  };
+};
+
+/**
+ * item/tool/requestUserInput の params を取り出す。
+ * @param value server request params
+ */
+export const parseToolRequestUserInputRequest = (value: unknown): ChatUserInputRequest | null => {
+  if (!isRecord(value) || !Array.isArray(value.questions)) {
+    return null;
+  }
+  const threadId = asString(value.threadId);
+  const turnId = asString(value.turnId);
+  const itemId = asString(value.itemId);
+  if (!threadId || !turnId || !itemId) {
+    return null;
+  }
+
+  const questions = value.questions
+    .map((entry) => parseToolRequestUserInputQuestion(entry))
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+  if (questions.length !== value.questions.length || questions.length === 0) {
+    return null;
+  }
+
+  return {
+    threadId,
+    turnId,
+    itemId,
+    questions,
   };
 };

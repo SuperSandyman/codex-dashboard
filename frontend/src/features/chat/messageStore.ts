@@ -74,6 +74,8 @@ export const applyStreamEventToMessages = (
     case 'turn_started':
     case 'approval_requested':
     case 'approval_resolved':
+    case 'user_input_requested':
+    case 'user_input_resolved':
       return [...messages];
     case 'item_started':
     case 'item_updated': {

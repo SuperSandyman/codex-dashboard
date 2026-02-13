@@ -7,6 +7,8 @@ import type {
   ChatLaunchOptions,
   ChatMessage,
   ChatModelOption,
+  ChatUserInputRequest,
+  RespondChatUserInputRequest,
   ChatSandboxMode,
 } from '../../api/chats';
 import { CommandExecutionBlock } from './CommandExecutionBlock';
@@ -26,9 +28,15 @@ interface ChatPaneProps {
   readonly isUpdatingLaunchOptions: boolean;
   readonly approvalRequests: readonly ChatApprovalRequest[];
   readonly submittingApprovalItemIds: readonly string[];
+  readonly userInputRequests: readonly ChatUserInputRequest[];
+  readonly submittingUserInputItemIds: readonly string[];
   readonly onSend: (text: string) => void;
   readonly onStop: () => void;
   readonly onRespondApproval: (itemId: string, decision: ChatApprovalDecision) => void;
+  readonly onRespondUserInput: (
+    itemId: string,
+    payload: RespondChatUserInputRequest,
+  ) => void;
   readonly onUpdateLaunchOptions: (nextLaunchOptions: ChatLaunchOptions) => void;
 }
 
@@ -92,6 +100,33 @@ const formatApprovalKind = (kind: ChatApprovalRequest['kind']): string => {
   return kind === 'commandExecution' ? 'Command Execution' : 'File Change';
 };
 
+const isQuestionResolved = (
+  drafts: Record<string, Record<string, string>>,
+  request: ChatUserInputRequest,
+): boolean => {
+  return request.questions.every((question) => {
+    const answer = drafts[request.itemId]?.[question.id] ?? '';
+    return answer.trim().length > 0;
+  });
+};
+
+const toUserInputResponsePayload = (
+  drafts: Record<string, Record<string, string>>,
+  request: ChatUserInputRequest,
+): RespondChatUserInputRequest | null => {
+  if (!isQuestionResolved(drafts, request)) {
+    return null;
+  }
+  const answers: RespondChatUserInputRequest['answers'] = {};
+  request.questions.forEach((question) => {
+    const answer = drafts[request.itemId]?.[question.id] ?? '';
+    answers[question.id] = {
+      answers: [answer],
+    };
+  });
+  return { answers };
+};
+
 /**
  * チャット履歴表示と Composer を提供する。
  * @param props ChatPane プロパティ
@@ -109,18 +144,37 @@ export const ChatPane = ({
   isUpdatingLaunchOptions,
   approvalRequests,
   submittingApprovalItemIds,
+  userInputRequests,
+  submittingUserInputItemIds,
   onSend,
   onStop,
   onRespondApproval,
+  onRespondUserInput,
   onUpdateLaunchOptions,
 }: ChatPaneProps) => {
   const [draft, setDraft] = useState('');
   const [isComposerSettingsOpen, setIsComposerSettingsOpen] = useState(false);
+  const [userInputDrafts, setUserInputDrafts] = useState<Record<string, Record<string, string>>>({});
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ block: 'end' });
   }, [messages.length, activeTurnId]);
+
+  useEffect(() => {
+    setUserInputDrafts((prev) => {
+      const next: Record<string, Record<string, string>> = {};
+      userInputRequests.forEach((request) => {
+        const existing = prev[request.itemId] ?? {};
+        const questionAnswers: Record<string, string> = {};
+        request.questions.forEach((question) => {
+          questionAnswers[question.id] = existing[question.id] ?? '';
+        });
+        next[request.itemId] = questionAnswers;
+      });
+      return next;
+    });
+  }, [chatId, userInputRequests]);
 
   const canSend = Boolean(chatId) && !isLoading && !isSending && !activeTurnId;
   const canStop = Boolean(chatId) && Boolean(activeTurnId);
@@ -204,6 +258,19 @@ export const ChatPane = ({
     });
   };
 
+  const handleUserInputChange = (itemId: string, questionId: string, value: string) => {
+    setUserInputDrafts((prev) => {
+      const nextRequestAnswers = {
+        ...(prev[itemId] ?? {}),
+        [questionId]: value,
+      };
+      return {
+        ...prev,
+        [itemId]: nextRequestAnswers,
+      };
+    });
+  };
+
   return (
     <div className="chat-card">
       <div className="chat-header">
@@ -257,6 +324,85 @@ export const ChatPane = ({
                       onClick={() => onRespondApproval(request.itemId, 'decline')}
                     >
                       No
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </section>
+        ) : null}
+        {userInputRequests.length > 0 ? (
+          <section className="user-input-list">
+            {userInputRequests.map((request) => {
+              const isSubmitting = submittingUserInputItemIds.includes(request.itemId);
+              const isResolved = isQuestionResolved(userInputDrafts, request);
+              return (
+                <article key={request.itemId} className="user-input-card">
+                  <header className="approval-header">
+                    <strong>Input Required</strong>
+                    <span>Tool User Input</span>
+                  </header>
+                  {request.questions.map((question) => {
+                    const current = userInputDrafts[request.itemId]?.[question.id] ?? '';
+                    const selectedOption =
+                      question.options?.find((option) => option.label === current) ?? null;
+                    const shouldUseSelect =
+                      !question.isOther && Boolean(question.options && question.options.length > 0);
+                    return (
+                      <div key={question.id} className="user-input-question">
+                        <div className="user-input-question-header">
+                          <strong>{question.header}</strong>
+                        </div>
+                        <p className="user-input-question-text">{question.question}</p>
+                        {shouldUseSelect ? (
+                          <>
+                            <select
+                              className="chat-select user-input-select"
+                              value={current}
+                              disabled={isSubmitting}
+                              onChange={(event) => {
+                                handleUserInputChange(request.itemId, question.id, event.target.value);
+                              }}
+                            >
+                              <option value="">Select an option</option>
+                              {question.options?.map((option) => (
+                                <option key={option.label} value={option.label}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            {selectedOption ? (
+                              <p className="user-input-option-description">{selectedOption.description}</p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <input
+                            className="chat-input user-input-text"
+                            type={question.isSecret ? 'password' : 'text'}
+                            value={current}
+                            disabled={isSubmitting}
+                            onChange={(event) => {
+                              handleUserInputChange(request.itemId, question.id, event.target.value);
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div className="approval-actions">
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      disabled={isSubmitting || !isResolved}
+                      onClick={() => {
+                        const payload = toUserInputResponsePayload(userInputDrafts, request);
+                        if (!payload) {
+                          return;
+                        }
+                        onRespondUserInput(request.itemId, payload);
+                      }}
+                    >
+                      Submit
                     </button>
                   </div>
                 </article>

@@ -4,7 +4,7 @@ A local development dashboard that lets you switch between Chat, Terminal, and E
 
 ## Features
 
-- Chat: integrates with `codex app-server` for thread creation, messaging, streaming output, launch permission options, and approval responses
+- Chat: integrates with `codex app-server` for thread creation, messaging, streaming output, launch permission options, approval responses, and tool user-input responses
 - Terminal: create PTY sessions, send input, resize, and reconnect
 - Editor: browse and edit files under `WORKSPACE_ROOT` with basic conflict detection
 
@@ -84,7 +84,7 @@ pnpm start
 
 - Health: `GET /api/health`
 - Chats: `GET/POST /api/chats`, `GET /api/chat-options`, `GET /api/chats/:id`, `PATCH /api/chats/:id/options`
-- Chat actions: `POST /api/chats/:id/messages`, `POST /api/chats/:id/interrupt`, `POST /api/chats/:id/approvals/:itemId`
+- Chat actions: `POST /api/chats/:id/messages`, `POST /api/chats/:id/interrupt`, `POST /api/chats/:id/approvals/:itemId`, `POST /api/chats/:id/user-input/:itemId`
 - Editor: `GET /api/editor/tree`, `GET/PUT /api/editor/file`
 - Terminals: `GET/POST /api/terminals`, `POST /api/terminals/:id/write`, `POST /api/terminals/:id/resize`
 - Chat WS: `/ws/chats/:threadId`
@@ -114,7 +114,7 @@ When creating or updating chats, you can set:
 
 The server normalizes known aliases (for example `onRequest`, `workspaceWrite`) to canonical values above.
 
-## Approval Flow
+## Approval / User Input Flow
 
 When app-server asks for approval (`item/commandExecution/requestApproval` or `item/fileChange/requestApproval`):
 
@@ -122,3 +122,21 @@ When app-server asks for approval (`item/commandExecution/requestApproval` or `i
 2. UI shows a `Yes / No` card inline in Chat view
 3. UI calls `POST /api/chats/:id/approvals/:itemId` with `{ "decision": "accept" | "decline" }`
 4. Dashboard replies to app-server with the same request id and emits `approval_resolved`
+
+When app-server requests tool user input (`item/tool/requestUserInput`):
+
+1. Dashboard emits WS event `user_input_requested`
+2. UI renders question cards and submits answers
+3. UI calls `POST /api/chats/:id/user-input/:itemId` with:
+
+```json
+{
+  "answers": {
+    "question_id": { "answers": ["selected or typed value"] }
+  }
+}
+```
+
+4. Dashboard replies to app-server with the same request id and emits `user_input_resolved`
+
+`item/tool/call` is currently rejected explicitly as unsupported by this dashboard.
