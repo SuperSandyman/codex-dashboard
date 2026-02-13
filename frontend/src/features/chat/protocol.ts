@@ -1,10 +1,17 @@
-import type { ChatApprovalDecision, ChatApprovalRequest, ChatMessage, ChatRole } from '../../api/chats';
+import type {
+  ChatApprovalDecision,
+  ChatApprovalRequest,
+  ChatMessage,
+  ChatRole,
+  ChatUserInputRequest,
+} from '../../api/chats';
 
 export interface ChatStreamReadyEvent {
   readonly type: 'ready';
   readonly threadId: string;
   readonly activeTurnId: string | null;
   readonly pendingApprovals: ChatApprovalRequest[];
+  readonly pendingUserInputRequests: ChatUserInputRequest[];
 }
 
 export interface ChatStreamTurnStartedEvent {
@@ -67,6 +74,18 @@ export interface ChatStreamApprovalResolvedEvent {
   readonly decision: ChatApprovalDecision;
 }
 
+export interface ChatStreamUserInputRequestedEvent {
+  readonly type: 'user_input_requested';
+  readonly threadId: string;
+  readonly request: ChatUserInputRequest;
+}
+
+export interface ChatStreamUserInputResolvedEvent {
+  readonly type: 'user_input_resolved';
+  readonly threadId: string;
+  readonly itemId: string;
+}
+
 export type ChatStreamEvent =
   | ChatStreamReadyEvent
   | ChatStreamTurnStartedEvent
@@ -76,7 +95,9 @@ export type ChatStreamEvent =
   | ChatStreamMessageDeltaEvent
   | ChatStreamErrorEvent
   | ChatStreamApprovalRequestedEvent
-  | ChatStreamApprovalResolvedEvent;
+  | ChatStreamApprovalResolvedEvent
+  | ChatStreamUserInputRequestedEvent
+  | ChatStreamUserInputResolvedEvent;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
@@ -140,6 +161,79 @@ const parseChatApprovalRequest = (value: unknown): ChatApprovalRequest | null =>
   };
 };
 
+const parseChatUserInputRequest = (value: unknown): ChatUserInputRequest | null => {
+  if (!isRecord(value) || !Array.isArray(value.questions)) {
+    return null;
+  }
+  if (
+    typeof value.threadId !== 'string' ||
+    typeof value.turnId !== 'string' ||
+    typeof value.itemId !== 'string'
+  ) {
+    return null;
+  }
+
+  const questions: ChatUserInputRequest['questions'] = [];
+  for (const entry of value.questions) {
+    if (!isRecord(entry)) {
+      return null;
+    }
+    if (
+      typeof entry.id !== 'string' ||
+      typeof entry.header !== 'string' ||
+      typeof entry.question !== 'string'
+    ) {
+      return null;
+    }
+    const isOther = entry.isOther === undefined ? false : entry.isOther;
+    const isSecret = entry.isSecret === undefined ? false : entry.isSecret;
+    if (typeof isOther !== 'boolean' || typeof isSecret !== 'boolean') {
+      return null;
+    }
+
+    let options: ChatUserInputRequest['questions'][number]['options'] = null;
+    if (entry.options !== undefined && entry.options !== null) {
+      if (!Array.isArray(entry.options)) {
+        return null;
+      }
+      options = [];
+      for (const option of entry.options) {
+        if (
+          !isRecord(option) ||
+          typeof option.label !== 'string' ||
+          typeof option.description !== 'string'
+        ) {
+          return null;
+        }
+        options.push({
+          label: option.label,
+          description: option.description,
+        });
+      }
+    }
+
+    questions.push({
+      id: entry.id,
+      header: entry.header,
+      question: entry.question,
+      isOther,
+      isSecret,
+      options,
+    });
+  }
+
+  if (questions.length === 0) {
+    return null;
+  }
+
+  return {
+    threadId: value.threadId,
+    turnId: value.turnId,
+    itemId: value.itemId,
+    questions,
+  };
+};
+
 /**
  * WebSocket で受信したストリームイベントを検証する。
  * @param payload 受信 JSON
@@ -165,11 +259,24 @@ export const parseChatStreamEvent = (payload: unknown): ChatStreamEvent | null =
         }
         pendingApprovals.push(parsed);
       }
+
+      const rawPendingUserInputRequests = Array.isArray(payload.pendingUserInputRequests)
+        ? payload.pendingUserInputRequests
+        : [];
+      const pendingUserInputRequests: ChatUserInputRequest[] = [];
+      for (const entry of rawPendingUserInputRequests) {
+        const parsed = parseChatUserInputRequest(entry);
+        if (!parsed) {
+          return null;
+        }
+        pendingUserInputRequests.push(parsed);
+      }
       return {
         type: 'ready',
         threadId: payload.threadId,
         activeTurnId: payload.activeTurnId,
         pendingApprovals,
+        pendingUserInputRequests,
       };
     }
     case 'turn_started':
@@ -274,6 +381,26 @@ export const parseChatStreamEvent = (payload: unknown): ChatStreamEvent | null =
         threadId: payload.threadId,
         itemId: payload.itemId,
         decision: payload.decision,
+      };
+    case 'user_input_requested': {
+      const request = parseChatUserInputRequest(payload.request);
+      if (!request) {
+        return null;
+      }
+      return {
+        type: 'user_input_requested',
+        threadId: payload.threadId,
+        request,
+      };
+    }
+    case 'user_input_resolved':
+      if (typeof payload.itemId !== 'string') {
+        return null;
+      }
+      return {
+        type: 'user_input_resolved',
+        threadId: payload.threadId,
+        itemId: payload.itemId,
       };
     default:
       return null;

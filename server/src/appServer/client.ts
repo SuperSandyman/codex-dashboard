@@ -233,6 +233,9 @@ export class AppServerClient {
     if (!isRecord(result) || typeof result.userAgent !== 'string') {
       throw new AppServerClientError('initialize response is invalid');
     }
+    this.#writeJson({
+      method: 'initialized',
+    });
     this.#isReady = true;
   }
 

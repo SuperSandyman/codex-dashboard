@@ -94,6 +94,27 @@ export interface ChatApprovalRequest {
   readonly grantRoot: string | null;
 }
 
+export interface ChatUserInputOption {
+  readonly label: string;
+  readonly description: string;
+}
+
+export interface ChatUserInputQuestion {
+  readonly id: string;
+  readonly header: string;
+  readonly question: string;
+  readonly isOther: boolean;
+  readonly isSecret: boolean;
+  readonly options: ChatUserInputOption[] | null;
+}
+
+export interface ChatUserInputRequest {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly questions: ChatUserInputQuestion[];
+}
+
 export interface RespondChatApprovalRequest {
   readonly decision: ChatApprovalDecision;
 }
@@ -101,6 +122,18 @@ export interface RespondChatApprovalRequest {
 export interface RespondChatApprovalResponse {
   readonly itemId: string;
   readonly decision: ChatApprovalDecision;
+}
+
+export interface ChatUserInputAnswer {
+  readonly answers: string[];
+}
+
+export interface RespondChatUserInputRequest {
+  readonly answers: Record<string, ChatUserInputAnswer>;
+}
+
+export interface RespondChatUserInputResponse {
+  readonly itemId: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -467,6 +500,15 @@ const parseRespondApprovalResponse = (value: unknown): RespondChatApprovalRespon
   };
 };
 
+const parseRespondUserInputResponse = (value: unknown): RespondChatUserInputResponse | null => {
+  if (!isRecord(value) || typeof value.itemId !== 'string') {
+    return null;
+  }
+  return {
+    itemId: value.itemId,
+  };
+};
+
 /**
  * チャット一覧を取得する。
  */
@@ -578,5 +620,27 @@ export const respondChatApproval = async (
       body: JSON.stringify(payload),
     },
     parseRespondApprovalResponse,
+  );
+};
+
+/**
+ * user input 要求へ回答を返す。
+ * @param id thread ID
+ * @param itemId 対象 item ID
+ * @param payload 回答内容
+ */
+export const respondChatUserInput = async (
+  id: string,
+  itemId: string,
+  payload: RespondChatUserInputRequest,
+) => {
+  return requestJson(
+    `/api/chats/${encodeURIComponent(id)}/user-input/${encodeURIComponent(itemId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    parseRespondUserInputResponse,
   );
 };

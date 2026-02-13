@@ -5,6 +5,8 @@ import {
   type ChatApprovalDecision,
   type ChatApprovalPolicy,
   type ChatApprovalRequest,
+  type ChatUserInputRequest,
+  type RespondChatUserInputRequest,
   type ChatSandboxMode,
   createChat,
   getChat,
@@ -12,6 +14,7 @@ import {
   interruptTurn,
   listChats,
   respondChatApproval,
+  respondChatUserInput,
   sendChatMessage,
   updateChatLaunchOptions,
   type ChatLaunchOptions,
@@ -172,6 +175,19 @@ const upsertApprovalRequest = (
   return copy;
 };
 
+const upsertUserInputRequest = (
+  requests: readonly ChatUserInputRequest[],
+  next: ChatUserInputRequest,
+): ChatUserInputRequest[] => {
+  const index = requests.findIndex((entry) => entry.itemId === next.itemId);
+  if (index < 0) {
+    return [...requests, next];
+  }
+  const copy = [...requests];
+  copy[index] = next;
+  return copy;
+};
+
 const sortTerminalsByUpdatedAt = (terminals: readonly TerminalSummary[]): TerminalSummary[] => {
   return [...terminals].sort((a, b) => {
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
@@ -292,6 +308,8 @@ const App = () => {
   const [newChatPrompt, setNewChatPrompt] = useState('');
   const [approvalRequests, setApprovalRequests] = useState<ChatApprovalRequest[]>([]);
   const [submittingApprovalItemIds, setSubmittingApprovalItemIds] = useState<string[]>([]);
+  const [userInputRequests, setUserInputRequests] = useState<ChatUserInputRequest[]>([]);
+  const [submittingUserInputItemIds, setSubmittingUserInputItemIds] = useState<string[]>([]);
   const [sessionDirectoryOptions, setSessionDirectoryOptions] = useState<string[]>([]);
   const [isLoadingSessionDirectories, setIsLoadingSessionDirectories] = useState(false);
   const [sessionDirectoryError, setSessionDirectoryError] = useState<string | null>(null);
@@ -666,6 +684,8 @@ const App = () => {
         setActiveTurnId(event.activeTurnId);
         setApprovalRequests(event.pendingApprovals);
         setSubmittingApprovalItemIds([]);
+        setUserInputRequests(event.pendingUserInputRequests);
+        setSubmittingUserInputItemIds([]);
         return;
       }
       if (event.type === 'turn_started') {
@@ -677,6 +697,8 @@ const App = () => {
         setActiveTurnId((prev) => (prev === event.turnId ? null : prev));
         setApprovalRequests((prev) => prev.filter((request) => request.turnId !== event.turnId));
         setSubmittingApprovalItemIds([]);
+        setUserInputRequests((prev) => prev.filter((request) => request.turnId !== event.turnId));
+        setSubmittingUserInputItemIds([]);
         setChats((prev) => touchChatSummary(prev, event.threadId, null));
       }
       if (event.type === 'approval_requested') {
@@ -686,6 +708,15 @@ const App = () => {
       if (event.type === 'approval_resolved') {
         setApprovalRequests((prev) => prev.filter((request) => request.itemId !== event.itemId));
         setSubmittingApprovalItemIds((prev) => prev.filter((itemId) => itemId !== event.itemId));
+        return;
+      }
+      if (event.type === 'user_input_requested') {
+        setUserInputRequests((prev) => upsertUserInputRequest(prev, event.request));
+        return;
+      }
+      if (event.type === 'user_input_resolved') {
+        setUserInputRequests((prev) => prev.filter((request) => request.itemId !== event.itemId));
+        setSubmittingUserInputItemIds((prev) => prev.filter((itemId) => itemId !== event.itemId));
         return;
       }
       if (event.type === 'error') {
@@ -804,6 +835,8 @@ const App = () => {
         setActiveTurnId(null);
         setApprovalRequests([]);
         setSubmittingApprovalItemIds([]);
+        setUserInputRequests([]);
+        setSubmittingUserInputItemIds([]);
       }, 0);
       return () => {
         isCancelled = true;
@@ -818,6 +851,8 @@ const App = () => {
       }
       setApprovalRequests([]);
       setSubmittingApprovalItemIds([]);
+      setUserInputRequests([]);
+      setSubmittingUserInputItemIds([]);
       void loadChatDetail(selectedChatId);
     }, 0);
     return () => {
@@ -1028,6 +1063,27 @@ const App = () => {
       return;
     }
     setApprovalRequests((prev) => prev.filter((entry) => entry.itemId !== itemId));
+  };
+
+  const handleRespondUserInput = async (
+    itemId: string,
+    payload: RespondChatUserInputRequest,
+  ) => {
+    if (!selectedChatId) {
+      return;
+    }
+    if (submittingUserInputItemIds.includes(itemId)) {
+      return;
+    }
+
+    setSubmittingUserInputItemIds((prev) => [...prev, itemId]);
+    const result = await respondChatUserInput(selectedChatId, itemId, payload);
+    setSubmittingUserInputItemIds((prev) => prev.filter((entry) => entry !== itemId));
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to respond user input');
+      return;
+    }
+    setUserInputRequests((prev) => prev.filter((entry) => entry.itemId !== itemId));
   };
 
   const handleKillTerminal = async () => {
@@ -1713,9 +1769,12 @@ const App = () => {
               isUpdatingLaunchOptions={isUpdatingLaunchOptions}
               approvalRequests={approvalRequests}
               submittingApprovalItemIds={submittingApprovalItemIds}
+              userInputRequests={userInputRequests}
+              submittingUserInputItemIds={submittingUserInputItemIds}
               onSend={handleSend}
               onStop={handleStop}
               onRespondApproval={handleRespondApproval}
+              onRespondUserInput={handleRespondUserInput}
               onUpdateLaunchOptions={handleUpdateSelectedLaunchOptions}
             />
           </div>

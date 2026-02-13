@@ -62,6 +62,7 @@ export interface ChatStreamReadyEvent {
   readonly threadId: string;
   readonly activeTurnId: string | null;
   readonly pendingApprovals: ChatApprovalRequest[];
+  readonly pendingUserInputRequests: ChatUserInputRequest[];
 }
 
 export interface ChatStreamTurnStartedEvent {
@@ -135,6 +136,47 @@ export interface ChatStreamApprovalResolvedEvent {
   readonly decision: ChatApprovalDecision;
 }
 
+export interface ChatUserInputOption {
+  readonly label: string;
+  readonly description: string;
+}
+
+export interface ChatUserInputQuestion {
+  readonly id: string;
+  readonly header: string;
+  readonly question: string;
+  readonly isOther: boolean;
+  readonly isSecret: boolean;
+  readonly options: ChatUserInputOption[] | null;
+}
+
+export interface ChatUserInputRequest {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly questions: ChatUserInputQuestion[];
+}
+
+export interface ChatUserInputAnswer {
+  readonly answers: string[];
+}
+
+export interface ChatUserInputResponse {
+  readonly answers: Record<string, ChatUserInputAnswer>;
+}
+
+export interface ChatStreamUserInputRequestedEvent {
+  readonly type: 'user_input_requested';
+  readonly threadId: string;
+  readonly request: ChatUserInputRequest;
+}
+
+export interface ChatStreamUserInputResolvedEvent {
+  readonly type: 'user_input_resolved';
+  readonly threadId: string;
+  readonly itemId: string;
+}
+
 export type ChatStreamEvent =
   | ChatStreamReadyEvent
   | ChatStreamTurnStartedEvent
@@ -144,4 +186,6 @@ export type ChatStreamEvent =
   | ChatStreamMessageDeltaEvent
   | ChatStreamErrorEvent
   | ChatStreamApprovalRequestedEvent
-  | ChatStreamApprovalResolvedEvent;
+  | ChatStreamApprovalResolvedEvent
+  | ChatStreamUserInputRequestedEvent
+  | ChatStreamUserInputResolvedEvent;
