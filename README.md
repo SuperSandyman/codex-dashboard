@@ -66,23 +66,18 @@ Run with `portless` using the current branch name:
 pnpm dev:pl
 ```
 
-This expands to:
+`dev:pl` uses a sanitized branch base (e.g. `fix/foo` -> `fix-foo`) and starts:
 
 ```bash
-portless "$(git branch --show-current)" pnpm dev
-```
-
-`pnpm dev` includes:
-
-```bash
-pnpm -C server dev
-pnpm -C frontend dev
+portless "<base>-api" pnpm -C server dev
+PORTLESS_BASE="<base>" portless "<base>-web" pnpm -C frontend dev
 ```
 
 - Frontend: `http://localhost:4873`
 - Server API: `http://localhost:4877`
 - Vite proxies `/api` and `/ws` to the server.
 - Frontend dev port uses `PORT` env when provided (fallback: `4873`).
+- When `PORTLESS_BASE` is set, Vite proxies `/api` and `/ws` to `http(s)://<PORTLESS_BASE>-api.localhost:1355`.
 
 Run separately:
 
