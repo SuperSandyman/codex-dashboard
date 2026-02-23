@@ -60,9 +60,24 @@ Run both frontend and server from the repository root:
 pnpm dev
 ```
 
+Run with `portless` using the current branch name:
+
+```bash
+pnpm dev:pl
+```
+
+`dev:pl` uses a sanitized branch base (e.g. `fix/foo` -> `fix-foo`) and starts:
+
+```bash
+portless "<base>-api" pnpm -C server dev
+PORTLESS_BASE="<base>" portless "<base>-web" pnpm -C frontend dev
+```
+
 - Frontend: `http://localhost:4873`
 - Server API: `http://localhost:4877`
 - Vite proxies `/api` and `/ws` to the server.
+- Frontend dev port uses `PORT` env when provided (fallback: `4873`).
+- When `PORTLESS_BASE` is set, Vite proxies `/api` and `/ws` to `http(s)://<PORTLESS_BASE>-api.localhost:1355`.
 
 Run separately:
 
