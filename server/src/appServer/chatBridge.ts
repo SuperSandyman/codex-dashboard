@@ -113,6 +113,7 @@ const DEFAULT_PAGE_LIMIT = 100;
 const MAX_PAGE_ROUNDS = 20;
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 const POLICY_CACHE_TTL_MS = 30 * 1000;
+const POLICY_FALLBACK_WARNING_INTERVAL_MS = 5 * 60 * 1000;
 const WORKSPACE_DIR_LIMIT = 80;
 const DEFAULT_APPROVAL_POLICIES: ChatApprovalPolicy[] = [
   'untrusted',
@@ -173,6 +174,8 @@ export class AppServerChatBridge {
   readonly #pendingUserInputsByThread = new Map<string, Map<string, PendingUserInputRequest>>();
   #modelCache: ChatModelCache | null = null;
   #policyCache: ChatPolicyCache | null = null;
+  #configReadWarningLoggedAt = 0;
+  #configRequirementsWarningLoggedAt = 0;
   #workspaceRootRealPath: string | null | undefined = undefined;
 
   /**
@@ -211,6 +214,8 @@ export class AppServerChatBridge {
     this.#pendingUserInputsByThread.clear();
     this.#modelCache = null;
     this.#policyCache = null;
+    this.#configReadWarningLoggedAt = 0;
+    this.#configRequirementsWarningLoggedAt = 0;
     this.#client.dispose();
   }
 
@@ -1356,9 +1361,7 @@ export class AppServerChatBridge {
       };
     } catch (error) {
       if (error instanceof AppServerRequestError || error instanceof AppServerClientError) {
-        console.warn('config/read is unavailable; policy defaults will use built-in values', {
-          message: error.message,
-        });
+        this.#warnPolicyFallbackIfNeeded('config/read', error.message);
         return {
           approvalPolicy: null,
           sandboxMode: null,
@@ -1381,13 +1384,36 @@ export class AppServerChatBridge {
       return null;
     } catch (error) {
       if (error instanceof AppServerRequestError || error instanceof AppServerClientError) {
-        console.warn('configRequirements/read is unavailable; policy restrictions are not applied', {
-          message: error.message,
-        });
+        this.#warnPolicyFallbackIfNeeded('configRequirements/read', error.message);
         return null;
       }
       throw error;
     }
+  }
+
+  #warnPolicyFallbackIfNeeded(
+    method: 'config/read' | 'configRequirements/read',
+    detailMessage: string,
+  ): void {
+    const now = Date.now();
+    if (method === 'config/read') {
+      if (now - this.#configReadWarningLoggedAt < POLICY_FALLBACK_WARNING_INTERVAL_MS) {
+        return;
+      }
+      this.#configReadWarningLoggedAt = now;
+      console.warn('config/read is unavailable; policy defaults will use built-in values', {
+        message: detailMessage,
+      });
+      return;
+    }
+    if (now - this.#configRequirementsWarningLoggedAt < POLICY_FALLBACK_WARNING_INTERVAL_MS) {
+      return;
+    }
+    this.#configRequirementsWarningLoggedAt = now;
+    // 同じ警告が短時間に連発するとノイズになるため、一定間隔でのみ出力する。
+    console.warn('configRequirements/read is unavailable; policy restrictions are not applied', {
+      message: detailMessage,
+    });
   }
 
   #mapBridgeError(error: unknown, code: string, fallback: string): ChatBridgeError {

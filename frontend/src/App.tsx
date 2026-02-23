@@ -272,6 +272,7 @@ const App = () => {
   const [editorWorkspaceRoot, setEditorWorkspaceRoot] = useState<string | null>(null);
   const [editorTreePath, setEditorTreePath] = useState('');
   const [editorTreeNodes, setEditorTreeNodes] = useState<EditorTreeNode[]>([]);
+  const [hasInitializedEditorTree, setHasInitializedEditorTree] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [editorContent, setEditorContent] = useState('');
   const [editorVersion, setEditorVersion] = useState<string | null>(null);
@@ -625,6 +626,7 @@ const App = () => {
       }
       setEditorTreePath(result.data.path);
       setEditorTreeNodes(result.data.nodes);
+      setHasInitializedEditorTree(true);
     },
     [showToast],
   );
@@ -894,14 +896,11 @@ const App = () => {
   }, [handleChatStreamEvent, selectedChatId, showToast]);
 
   useEffect(() => {
-    if (activeView !== 'editor' || editorWorkspaceRoot === null) {
-      return;
-    }
-    if (editorTreeNodes.length > 0) {
+    if (activeView !== 'editor' || editorWorkspaceRoot === null || hasInitializedEditorTree) {
       return;
     }
     void loadEditorTree('');
-  }, [activeView, editorTreeNodes.length, editorWorkspaceRoot, loadEditorTree]);
+  }, [activeView, editorWorkspaceRoot, hasInitializedEditorTree, loadEditorTree]);
 
   useEffect(() => {
     if (!isEditorDirty) {

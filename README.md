@@ -60,9 +60,29 @@ Run both frontend and server from the repository root:
 pnpm dev
 ```
 
+Run with `portless` using the current branch name:
+
+```bash
+pnpm dev:pl
+```
+
+This expands to:
+
+```bash
+portless "$(git branch --show-current)" pnpm dev
+```
+
+`pnpm dev` includes:
+
+```bash
+pnpm -C server dev
+pnpm -C frontend dev
+```
+
 - Frontend: `http://localhost:4873`
 - Server API: `http://localhost:4877`
 - Vite proxies `/api` and `/ws` to the server.
+- Frontend dev port uses `PORT` env when provided (fallback: `4873`).
 
 Run separately:
 
