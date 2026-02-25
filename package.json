@@ -9,7 +9,7 @@
     "dev": "pnpm -C server dev & pnpm -C frontend dev",
     "dev:pl": "zsh -lc 'branch=\"$(git branch --show-current)\"; [[ -n \"$branch\" ]] || { echo \"Failed to detect current git branch.\" >&2; exit 1; }; base=\"${branch//\\//-}\"; portless \"${base}-api\" pnpm -C server dev --host & api_pid=$!; trap \"kill $api_pid\" EXIT INT TERM; PORTLESS_BASE=\"$base\" portless \"${base}-web\" pnpm -C frontend dev --host; wait'",
     "build": "pnpm -C frontend build && pnpm -C server build",
-    "start": "pnpm -C server start",
+    "start": "pnpm -C server start && pnpm -C frontend start",
     "lint": "pnpm -C frontend lint && pnpm -C server lint"
   },
   "devDependencies": {
