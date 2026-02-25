@@ -48,6 +48,13 @@ import {
 import { parseChatStreamEvent, type ChatStreamEvent } from './features/chat/protocol';
 import { EditorPane } from './features/editor/EditorPane';
 import { FileTree } from './features/editor/FileTree';
+import {
+  clearMissingEditorBookmarks,
+  listEditorBookmarks,
+  removeEditorBookmark,
+  upsertEditorBookmark,
+} from './features/editor/bookmarks/indexedDbStore';
+import type { EditorFileBookmark } from './features/editor/bookmarks/types';
 import { TerminalPane } from './features/terminal/TerminalPane';
 import type { TerminalStreamEvent } from './features/terminal/protocol';
 
@@ -256,6 +263,17 @@ const countPathDepth = (pathValue: string): number => {
   return pathValue.split('/').filter((segment) => segment.length > 0).length;
 };
 
+const toBookmarkLabel = (path: string): string => {
+  const segments = path.split('/').filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? path;
+};
+
+const sortBookmarksByUpdatedAt = (
+  bookmarks: readonly EditorFileBookmark[],
+): EditorFileBookmark[] => {
+  return [...bookmarks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+};
+
 /**
  * Chat と Operations Terminal を切り替えて利用するダッシュボード。
  */
@@ -274,6 +292,8 @@ const App = () => {
   const [editorTreeNodes, setEditorTreeNodes] = useState<EditorTreeNode[]>([]);
   const [hasInitializedEditorTree, setHasInitializedEditorTree] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [editorBookmarks, setEditorBookmarks] = useState<EditorFileBookmark[]>([]);
+  const [bookmarkPendingPath, setBookmarkPendingPath] = useState<string | null>(null);
   const [editorContent, setEditorContent] = useState('');
   const [editorVersion, setEditorVersion] = useState<string | null>(null);
   const [editorUpdatedAt, setEditorUpdatedAt] = useState<string | null>(null);
@@ -293,6 +313,7 @@ const App = () => {
   const [isLoadingEditorCatalog, setIsLoadingEditorCatalog] = useState(false);
   const [isLoadingEditorTree, setIsLoadingEditorTree] = useState(false);
   const [isLoadingEditorFile, setIsLoadingEditorFile] = useState(false);
+  const [isLoadingEditorBookmarks, setIsLoadingEditorBookmarks] = useState(false);
   const [isSavingEditorFile, setIsSavingEditorFile] = useState(false);
 
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -341,6 +362,13 @@ const App = () => {
   const isEditorDirty = useMemo(() => {
     return selectedFilePath !== null && editorContent !== lastSavedContent;
   }, [editorContent, lastSavedContent, selectedFilePath]);
+
+  const isSelectedFileBookmarked = useMemo(() => {
+    if (!selectedFilePath) {
+      return false;
+    }
+    return editorBookmarks.some((bookmark) => bookmark.path === selectedFilePath);
+  }, [editorBookmarks, selectedFilePath]);
 
   const chatDirectoryOptions = useMemo(() => {
     const options = new Set(sessionDirectoryOptions);
@@ -632,7 +660,7 @@ const App = () => {
   );
 
   const loadEditorFile = useCallback(
-    async (targetPath: string) => {
+    async (targetPath: string, options?: { readonly suppressToast?: boolean }) => {
       setIsLoadingEditorFile(true);
       setEditorLoadError(null);
       setEditorSaveError(null);
@@ -642,14 +670,22 @@ const App = () => {
       if (!result.ok || !result.data) {
         const message = result.error?.message ?? 'Failed to load file';
         setEditorLoadError(message);
-        showToast(message);
-        return;
+        if (!options?.suppressToast) {
+          showToast(message);
+        }
+        return {
+          ok: false as const,
+          status: result.status,
+          errorCode: result.error?.code ?? null,
+          message,
+        };
       }
       setSelectedFilePath(result.data.path);
       setEditorContent(result.data.content);
       setLastSavedContent(result.data.content);
       setEditorVersion(result.data.version);
       setEditorUpdatedAt(result.data.updatedAt);
+      return { ok: true as const };
     },
     [showToast],
   );
@@ -903,6 +939,41 @@ const App = () => {
   }, [activeView, editorWorkspaceRoot, hasInitializedEditorTree, loadEditorTree]);
 
   useEffect(() => {
+    if (!editorWorkspaceRoot) {
+      setEditorBookmarks([]);
+      setIsLoadingEditorBookmarks(false);
+      return;
+    }
+
+    let isCancelled = false;
+    setIsLoadingEditorBookmarks(true);
+    void (async () => {
+      try {
+        const bookmarks = await listEditorBookmarks(editorWorkspaceRoot);
+        if (isCancelled) {
+          return;
+        }
+        setEditorBookmarks(sortBookmarksByUpdatedAt(bookmarks));
+      } catch (error) {
+        if (isCancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'Failed to load bookmarks';
+        showToast(`Bookmarks are unavailable: ${message}`);
+        setEditorBookmarks([]);
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingEditorBookmarks(false);
+        }
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [editorWorkspaceRoot, showToast]);
+
+  useEffect(() => {
     if (!isEditorDirty) {
       return undefined;
     }
@@ -1106,12 +1177,12 @@ const App = () => {
     setSelectedTerminalId(nextSelectedTerminalId);
   };
 
-  const confirmDiscardEditorChanges = (): boolean => {
+  const confirmDiscardEditorChanges = useCallback((): boolean => {
     if (!isEditorDirty) {
       return true;
     }
     return window.confirm('You have unsaved changes. Discard them?');
-  };
+  }, [isEditorDirty]);
 
   const handleOpenEditorDirectory = (targetPath: string) => {
     void loadEditorTree(targetPath);
@@ -1124,6 +1195,79 @@ const App = () => {
     void loadEditorFile(targetPath);
     setIsMenuOpen(false);
   };
+
+  const handleToggleEditorBookmark = useCallback(async () => {
+    if (!editorWorkspaceRoot || !selectedFilePath) {
+      return;
+    }
+    const existing = editorBookmarks.find((bookmark) => bookmark.path === selectedFilePath) ?? null;
+    const previousBookmarks = editorBookmarks;
+    if (existing) {
+      const nextBookmarks = editorBookmarks.filter((bookmark) => bookmark.path !== selectedFilePath);
+      setEditorBookmarks(nextBookmarks);
+      try {
+        await removeEditorBookmark(editorWorkspaceRoot, selectedFilePath);
+      } catch (error) {
+        setEditorBookmarks(previousBookmarks);
+        const message = error instanceof Error ? error.message : 'Failed to remove bookmark';
+        showToast(`Failed to update bookmark: ${message}`);
+      }
+      return;
+    }
+
+    const nextBookmark: EditorFileBookmark = {
+      path: selectedFilePath,
+      label: toBookmarkLabel(selectedFilePath),
+      updatedAt: new Date().toISOString(),
+    };
+    const nextBookmarks = sortBookmarksByUpdatedAt([
+      ...editorBookmarks.filter((bookmark) => bookmark.path !== selectedFilePath),
+      nextBookmark,
+    ]);
+    setEditorBookmarks(nextBookmarks);
+    try {
+      await upsertEditorBookmark(editorWorkspaceRoot, nextBookmark);
+    } catch (error) {
+      setEditorBookmarks(previousBookmarks);
+      const message = error instanceof Error ? error.message : 'Failed to add bookmark';
+      showToast(`Failed to update bookmark: ${message}`);
+    }
+  }, [editorBookmarks, editorWorkspaceRoot, selectedFilePath, showToast]);
+
+  const handleSelectEditorBookmark = useCallback(
+    async (targetPath: string) => {
+      if (!confirmDiscardEditorChanges()) {
+        return;
+      }
+      setBookmarkPendingPath(targetPath);
+      const result = await loadEditorFile(targetPath, { suppressToast: true });
+      setBookmarkPendingPath((currentPath) => (currentPath === targetPath ? null : currentPath));
+
+      if (result.ok) {
+        setIsMenuOpen(false);
+        return;
+      }
+
+      const isFileMissing = result.status === 404 || result.errorCode === 'file_not_found';
+      if (!isFileMissing) {
+        showToast(result.message);
+        return;
+      }
+
+      setEditorBookmarks((prev) => prev.filter((bookmark) => bookmark.path !== targetPath));
+      showToast('File no longer exists. Bookmark removed.');
+      if (!editorWorkspaceRoot) {
+        return;
+      }
+      try {
+        await clearMissingEditorBookmarks(editorWorkspaceRoot, [targetPath]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to remove missing bookmark';
+        showToast(`Failed to sync bookmarks: ${message}`);
+      }
+    },
+    [confirmDiscardEditorChanges, editorWorkspaceRoot, loadEditorFile, showToast],
+  );
 
   const handleSaveEditorFile = async () => {
     if (!selectedFilePath) {
@@ -1737,6 +1881,9 @@ const App = () => {
               currentPath={editorTreePath}
               selectedFilePath={selectedFilePath}
               isLoading={isLoadingEditorCatalog || isLoadingEditorTree}
+              isLoadingBookmarks={isLoadingEditorBookmarks}
+              bookmarkPendingPath={bookmarkPendingPath}
+              bookmarks={editorBookmarks}
               nodes={editorTreeNodes}
               errorMessage={
                 editorWorkspaceRoot === null
@@ -1745,6 +1892,7 @@ const App = () => {
               }
               onOpenDirectory={handleOpenEditorDirectory}
               onSelectFile={handleSelectEditorFile}
+              onSelectBookmark={handleSelectEditorBookmark}
             />
           ) : null}
         </aside>
@@ -1797,6 +1945,7 @@ const App = () => {
                 isLoading={isLoadingEditorFile}
                 isSaving={isSavingEditorFile}
                 isDirty={isEditorDirty}
+                isBookmarked={isSelectedFileBookmarked}
                 errorMessage={
                   editorWorkspaceRoot === null
                     ? 'WORKSPACE_ROOT is not configured.'
@@ -1810,6 +1959,9 @@ const App = () => {
                   setEditorSaveStatus(editorUpdatedAt ? `Loaded ${formatRelative(editorUpdatedAt)}` : null);
                 }}
                 onSave={handleSaveEditorFile}
+                onToggleBookmark={() => {
+                  void handleToggleEditorBookmark();
+                }}
               />
             </div>
           </div>

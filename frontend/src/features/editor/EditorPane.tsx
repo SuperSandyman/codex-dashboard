@@ -12,11 +12,13 @@ interface EditorPaneProps {
   readonly isLoading: boolean;
   readonly isSaving: boolean;
   readonly isDirty: boolean;
+  readonly isBookmarked: boolean;
   readonly errorMessage: string | null;
   readonly saveErrorMessage: string | null;
   readonly saveStatusMessage: string | null;
   readonly onChange: (value: string) => void;
   readonly onSave: () => void;
+  readonly onToggleBookmark: () => void;
 }
 
 /**
@@ -29,11 +31,13 @@ export const EditorPane = ({
   isLoading,
   isSaving,
   isDirty,
+  isBookmarked,
   errorMessage,
   saveErrorMessage,
   saveStatusMessage,
   onChange,
   onSave,
+  onToggleBookmark,
 }: EditorPaneProps) => {
   const languageExtensions = useMemo(() => {
     if (!filePath) {
@@ -65,6 +69,9 @@ export const EditorPane = ({
           <span className="editor-pane-title-text">{filePath}</span>
         </div>
         <div className="editor-pane-actions">
+          <button className="button button-secondary" type="button" onClick={onToggleBookmark}>
+            {isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
+          </button>
           <span className={`editor-dirty-badge${isDirty ? ' dirty' : ''}`}>
             {isDirty ? 'Unsaved' : 'Saved'}
           </span>
