@@ -290,47 +290,6 @@ export const ChatPane = ({
         {chatId && messages.length === 0 && !isLoading ? (
           <div className="chat-empty">No messages yet. Send your first prompt.</div>
         ) : null}
-        {approvalRequests.length > 0 ? (
-          <section className="approval-list">
-            {approvalRequests.map((request) => {
-              const isSubmitting = submittingApprovalItemIds.includes(request.itemId);
-              return (
-                <article key={request.itemId} className="approval-card">
-                  <header className="approval-header">
-                    <strong>Approval Required</strong>
-                    <span>{formatApprovalKind(request.kind)}</span>
-                  </header>
-                  {request.reason ? <p className="approval-reason">{request.reason}</p> : null}
-                  {request.command ? (
-                    <pre className="approval-command">
-                      <code>{request.command}</code>
-                    </pre>
-                  ) : null}
-                  {request.cwd ? <div className="approval-path">cwd: {request.cwd}</div> : null}
-                  {request.grantRoot ? <div className="approval-path">grantRoot: {request.grantRoot}</div> : null}
-                  <div className="approval-actions">
-                    <button
-                      className="button button-primary"
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => onRespondApproval(request.itemId, 'accept')}
-                    >
-                      Yes
-                    </button>
-                    <button
-                      className="button button-secondary"
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => onRespondApproval(request.itemId, 'decline')}
-                    >
-                      No
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </section>
-        ) : null}
         {userInputRequests.length > 0 ? (
           <section className="user-input-list">
             {userInputRequests.map((request) => {
@@ -445,6 +404,47 @@ export const ChatPane = ({
       </div>
 
       <div className="chat-composer">
+        {chatId && approvalRequests.length > 0 ? (
+          <section className="approval-list">
+            {approvalRequests.map((request) => {
+              const isSubmitting = submittingApprovalItemIds.includes(request.itemId);
+              return (
+                <article key={request.itemId} className="approval-card">
+                  <header className="approval-header">
+                    <strong>Approval Required</strong>
+                    <span>{formatApprovalKind(request.kind)}</span>
+                  </header>
+                  {request.reason ? <p className="approval-reason">{request.reason}</p> : null}
+                  {request.command ? (
+                    <pre className="approval-command">
+                      <code>{request.command}</code>
+                    </pre>
+                  ) : null}
+                  {request.cwd ? <div className="approval-path">cwd: {request.cwd}</div> : null}
+                  {request.grantRoot ? <div className="approval-path">grantRoot: {request.grantRoot}</div> : null}
+                  <div className="approval-actions">
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => onRespondApproval(request.itemId, 'accept')}
+                    >
+                      Yes
+                    </button>
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => onRespondApproval(request.itemId, 'decline')}
+                    >
+                      No
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </section>
+        ) : null}
         <textarea
           className="chat-input"
           placeholder="Type your prompt..."
