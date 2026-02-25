@@ -887,6 +887,13 @@
   gap: 10px;
 }
 
+.chat-composer > .approval-list {
+  max-height: min(32vh, 280px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
 .approval-card {
   border: 1px solid rgba(247, 185, 85, 0.42);
   border-radius: 8px;
@@ -1284,6 +1291,10 @@
   background: rgba(10, 14, 16, 0.8);
 }
 
+.chat-composer .approval-card {
+  margin: 0;
+}
+
 .chat-composer-row {
   display: flex;
   align-items: center;
@@ -1550,6 +1561,10 @@
 
   .chat-input {
     min-height: 68px;
+  }
+
+  .chat-composer > .approval-list {
+    max-height: min(28vh, 220px);
   }
 
   .new-chat-panel-actions .button {
