@@ -22,3 +22,6 @@ yarn-error.log*
 docs
 plan
 worktrees
+
+# opensrc - source code for packages
+opensrc/

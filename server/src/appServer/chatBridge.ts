@@ -988,6 +988,9 @@ export class AppServerChatBridge {
       case 'error':
         this.#handleTurnError(payload);
         return;
+      case 'codex/event/skills_update_available':
+        // スキル更新通知は無視（ログ出力なし）
+        return;
       default:
         this.#logIgnoredNotification(method, payload);
         return;
