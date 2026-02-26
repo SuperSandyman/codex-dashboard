@@ -980,6 +980,11 @@ export class AppServerChatBridge {
       case 'item/plan/delta':
         this.#handleDeltaEvent(payload, 'system', 'plan');
         return;
+      case 'turn/diff/updated':
+      case 'thread/status/changed':
+      case 'item/commandExecution/terminalInteraction':
+        this.#handleLogOnlyNotification(method, payload);
+        return;
       case 'turn/plan/updated':
       case 'thread/tokenUsage/updated':
       case 'item/reasoning/summaryPartAdded':
@@ -1139,6 +1144,14 @@ export class AppServerChatBridge {
         );
         return true;
       }
+      case 'skill/requestApproval': {
+        this.#client.rejectServerRequest(
+          id,
+          -32004,
+          'skill/requestApproval is not supported by codex-dashboard',
+        );
+        return true;
+      }
       default:
         this.#client.rejectServerRequest(id, -32004, `unsupported app-server request: ${method}`);
         return true;
@@ -1293,6 +1306,55 @@ export class AppServerChatBridge {
       threadId: parseStringField(payload, 'threadId'),
       turnId: parseStringField(payload, 'turnId'),
       itemId: parseStringField(payload, 'itemId'),
+    });
+  }
+
+  #handleLogOnlyNotification(method: string, payload: Record<string, unknown>): void {
+    const threadId = parseStringField(payload, 'threadId');
+    if (!threadId) {
+      this.#logIgnoredNotification(method, payload);
+      return;
+    }
+
+    const turnId = parseStringField(payload, 'turnId');
+    const itemId = parseStringField(payload, 'itemId');
+    const message = (() => {
+      switch (method) {
+        case 'turn/diff/updated': {
+          const diff = parseStringField(payload, 'diff');
+          const diffLength = diff?.length ?? 0;
+          return `Turn diff updated (${diffLength} chars).`;
+        }
+        case 'thread/status/changed': {
+          const status = parseStringField(payload, 'status') ?? 'unknown';
+          return `Thread status changed: ${status}.`;
+        }
+        case 'item/commandExecution/terminalInteraction': {
+          const processId = parseStringField(payload, 'processId') ?? 'unknown';
+          const stdin = parseStringField(payload, 'stdin');
+          const stdinLength = stdin?.length ?? 0;
+          return `Terminal interaction observed (process=${processId}, stdinLength=${stdinLength}).`;
+        }
+        default:
+          return `${method} received.`;
+      }
+    })();
+
+    this.#broadcast(threadId, {
+      type: 'app_server_event',
+      threadId,
+      method,
+      turnId,
+      itemId,
+      message,
+    });
+
+    console.info('app-server notification handled as log-only event', {
+      method,
+      threadId,
+      turnId,
+      itemId,
+      message,
     });
   }
 

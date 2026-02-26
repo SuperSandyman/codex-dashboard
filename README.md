@@ -155,3 +155,10 @@ When app-server requests tool user input (`item/tool/requestUserInput`):
 4. Dashboard replies to app-server with the same request id and emits `user_input_resolved`
 
 `item/tool/call` is currently rejected explicitly as unsupported by this dashboard.
+`skill/requestApproval` is also rejected explicitly as unsupported by this dashboard.
+
+## app-server Compatibility Notes
+
+- `initialize` sends capabilities with `experimentalApi: true` and `optOutNotificationMethods` for known noisy notifications.
+- JSON-RPC error `-32001` (`Server overloaded; retry later.`) is treated as retryable with exponential backoff + jitter.
+- `turn/diff/updated`, `thread/status/changed`, and `item/commandExecution/terminalInteraction` are handled as log-only stream events (`app_server_event`) so the stream remains healthy even when UI rendering is not implemented.
