@@ -42,6 +42,12 @@ type ServerRequestListener = (request: RpcServerRequest) => boolean;
 const DEFAULT_CLIENT_NAME = 'codex-dashboard';
 const DEFAULT_CLIENT_VERSION = '0.1.0';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
+const DEFAULT_EXPERIMENTAL_API = true;
+const DEFAULT_OPT_OUT_NOTIFICATION_METHODS = ['codex/event/skills_update_available'];
+const RETRYABLE_OVERLOADED_ERROR_CODE = -32001;
+const MAX_OVERLOADED_RETRY_ATTEMPTS = 4;
+const OVERLOADED_RETRY_BASE_DELAY_MS = 200;
+const OVERLOADED_RETRY_MAX_DELAY_MS = 3000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
@@ -62,6 +68,12 @@ const parseRpcError = (value: unknown): RpcErrorShape | null => {
     code: value.code,
     message: value.message,
   };
+};
+
+const sleep = async (delayMs: number): Promise<void> => {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 };
 
 /**
@@ -121,7 +133,7 @@ export class AppServerClient {
    */
   async request(method: string, params: unknown): Promise<unknown> {
     await this.#ensureReady();
-    return this.#requestInternal(method, params);
+    return this.#requestWithRetry(method, params);
   }
 
   /**
@@ -223,11 +235,15 @@ export class AppServerClient {
       this.#startProcess();
     }
 
-    const result = await this.#requestInternal('initialize', {
+    const result = await this.#requestWithRetry('initialize', {
       clientInfo: {
         name: DEFAULT_CLIENT_NAME,
         title: null,
         version: DEFAULT_CLIENT_VERSION,
+      },
+      capabilities: {
+        experimentalApi: DEFAULT_EXPERIMENTAL_API,
+        optOutNotificationMethods: DEFAULT_OPT_OUT_NOTIFICATION_METHODS,
       },
     });
     if (!isRecord(result) || typeof result.userAgent !== 'string') {
@@ -395,6 +411,36 @@ export class AppServerClient {
         console.error('notification listener failed', error);
       }
     });
+  }
+
+  async #requestWithRetry(method: string, params: unknown): Promise<unknown> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.#requestInternal(method, params);
+      } catch (error) {
+        if (
+          !(error instanceof AppServerRequestError) ||
+          error.code !== RETRYABLE_OVERLOADED_ERROR_CODE ||
+          attempt >= MAX_OVERLOADED_RETRY_ATTEMPTS
+        ) {
+          throw error;
+        }
+        const baseDelayMs = Math.min(
+          OVERLOADED_RETRY_BASE_DELAY_MS * 2 ** attempt,
+          OVERLOADED_RETRY_MAX_DELAY_MS,
+        );
+        const jitterMs = Math.floor(Math.random() * Math.max(1, Math.floor(baseDelayMs / 2)));
+        const waitMs = baseDelayMs + jitterMs;
+        console.warn('app-server overloaded; retrying request', {
+          method,
+          code: error.code,
+          attempt: attempt + 1,
+          maxAttempts: MAX_OVERLOADED_RETRY_ATTEMPTS,
+          waitMs,
+        });
+        await sleep(waitMs);
+      }
+    }
   }
 
   #requestInternal(method: string, params: unknown): Promise<unknown> {

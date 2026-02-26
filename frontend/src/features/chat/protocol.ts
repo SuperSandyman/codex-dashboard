@@ -86,6 +86,15 @@ export interface ChatStreamUserInputResolvedEvent {
   readonly itemId: string;
 }
 
+export interface ChatStreamAppServerEvent {
+  readonly type: 'app_server_event';
+  readonly threadId: string;
+  readonly method: string;
+  readonly turnId: string | null;
+  readonly itemId: string | null;
+  readonly message: string;
+}
+
 export type ChatStreamEvent =
   | ChatStreamReadyEvent
   | ChatStreamTurnStartedEvent
@@ -97,7 +106,8 @@ export type ChatStreamEvent =
   | ChatStreamApprovalRequestedEvent
   | ChatStreamApprovalResolvedEvent
   | ChatStreamUserInputRequestedEvent
-  | ChatStreamUserInputResolvedEvent;
+  | ChatStreamUserInputResolvedEvent
+  | ChatStreamAppServerEvent;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object';
@@ -401,6 +411,23 @@ export const parseChatStreamEvent = (payload: unknown): ChatStreamEvent | null =
         type: 'user_input_resolved',
         threadId: payload.threadId,
         itemId: payload.itemId,
+      };
+    case 'app_server_event':
+      if (
+        typeof payload.method !== 'string' ||
+        (payload.turnId !== null && typeof payload.turnId !== 'string') ||
+        (payload.itemId !== null && typeof payload.itemId !== 'string') ||
+        typeof payload.message !== 'string'
+      ) {
+        return null;
+      }
+      return {
+        type: 'app_server_event',
+        threadId: payload.threadId,
+        method: payload.method,
+        turnId: payload.turnId,
+        itemId: payload.itemId,
+        message: payload.message,
       };
     default:
       return null;

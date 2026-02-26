@@ -177,6 +177,18 @@ export interface ChatStreamUserInputResolvedEvent {
   readonly itemId: string;
 }
 
+/**
+ * app-server の補助通知を UI へそのまま転送するイベント。
+ */
+export interface ChatStreamAppServerEvent {
+  readonly type: 'app_server_event';
+  readonly threadId: string;
+  readonly method: string;
+  readonly turnId: string | null;
+  readonly itemId: string | null;
+  readonly message: string;
+}
+
 export type ChatStreamEvent =
   | ChatStreamReadyEvent
   | ChatStreamTurnStartedEvent
@@ -188,4 +200,5 @@ export type ChatStreamEvent =
   | ChatStreamApprovalRequestedEvent
   | ChatStreamApprovalResolvedEvent
   | ChatStreamUserInputRequestedEvent
-  | ChatStreamUserInputResolvedEvent;
+  | ChatStreamUserInputResolvedEvent
+  | ChatStreamAppServerEvent;

@@ -760,6 +760,9 @@ const App = () => {
       if (event.type === 'error') {
         showToast(event.error.message);
       }
+      if (event.type === 'app_server_event') {
+        return;
+      }
 
       setMessages((prev) => applyStreamEventToMessages(prev, event));
 
