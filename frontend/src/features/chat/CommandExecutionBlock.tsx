@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+
+import { Button } from '../../components/ui/button';
 
 interface CommandExecutionBlockProps {
   readonly command: string;
@@ -29,7 +31,10 @@ const resolveStatusLabel = (status: string | null, exitCode: number | null): str
   return status ?? 'Unknown';
 };
 
-const resolveStatusTone = (status: string | null, exitCode: number | null): 'running' | 'success' | 'failure' | 'idle' => {
+const resolveStatusTone = (
+  status: string | null,
+  exitCode: number | null,
+): 'running' | 'success' | 'failure' | 'idle' => {
   if (isInProgressStatus(status)) {
     return 'running';
   }
@@ -53,6 +58,13 @@ const toOutputPreview = (output: string): string => {
   return `${firstLine.slice(0, 120)}...`;
 };
 
+const toneClassByStatus: Record<ReturnType<typeof resolveStatusTone>, string> = {
+  running: 'text-amber-300',
+  success: 'text-emerald-300',
+  failure: 'text-red-300',
+  idle: 'text-muted-foreground',
+};
+
 /**
  * commandExecution メッセージを「コマンド」「ステータス」「出力」に分けて描画する。
  * 長い本文は初期折りたたみとし、実行中は自動展開して追従しやすくする。
@@ -60,7 +72,8 @@ const toOutputPreview = (output: string): string => {
  */
 export const CommandExecutionBlock = ({ command, output, exitCode, status }: CommandExecutionBlockProps) => {
   const isRunning = isInProgressStatus(status);
-  const [isExpanded, setIsExpanded] = useState(isRunning);
+  const [isExpandedManual, setIsExpandedManual] = useState(false);
+  const isExpanded = isRunning || isExpandedManual;
   const statusLabel = resolveStatusLabel(status, exitCode);
   const statusTone = resolveStatusTone(status, exitCode);
   const outputLineCount = useMemo(() => {
@@ -70,43 +83,40 @@ export const CommandExecutionBlock = ({ command, output, exitCode, status }: Com
     return output.split('\n').length;
   }, [output]);
 
-  useEffect(() => {
-    if (isRunning) {
-      setIsExpanded(true);
-    }
-  }, [isRunning, output]);
-
   return (
-    <div className="command-exec-block">
-      <div className="command-exec-meta">
-        <div className="command-exec-label">Command</div>
-        <code className="command-exec-command">{command}</code>
+    <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3 text-sm">
+      <div className="grid gap-1">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">Command</div>
+        <code className="overflow-auto rounded-md border border-border/60 bg-background/60 px-2 py-1 text-xs">{command}</code>
       </div>
 
-      <div className="command-exec-status-row">
-        <span className={`command-exec-status tone-${statusTone}`}>Status: {statusLabel}</span>
-        {exitCode !== null ? <span className="command-exec-exit">exitCode: {exitCode}</span> : null}
+      <div className="flex items-center gap-2 text-xs">
+        <span className={toneClassByStatus[statusTone]}>Status: {statusLabel}</span>
+        {exitCode !== null ? <span className="text-muted-foreground">exitCode: {exitCode}</span> : null}
       </div>
 
-      <div className="command-exec-output">
-        <div className="command-exec-output-header">
-          <span className="command-exec-label">Output</span>
-          <button
+      <div className="grid gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs uppercase tracking-wide text-muted-foreground">Output</span>
+          <Button
             type="button"
-            className="button button-secondary command-exec-toggle"
-            onClick={() => setIsExpanded((prev) => !prev)}
+            variant="outline"
+            size="sm"
+            onClick={() => setIsExpandedManual((prev) => !prev)}
             aria-label={isExpanded ? 'Collapse command output' : 'Expand command output'}
+            disabled={isRunning}
           >
-            {isExpanded ? 'Hide output' : 'Show output'}
-          </button>
+            {isRunning ? 'Streaming...' : isExpanded ? 'Hide output' : 'Show output'}
+          </Button>
         </div>
 
         {!isExpanded ? (
-          <p className="command-exec-preview">
-            {toOutputPreview(output)}{outputLineCount > 1 ? ` (${outputLineCount} lines)` : ''}
+          <p className="rounded-md border border-border/60 bg-background/60 px-2 py-1 text-xs text-muted-foreground">
+            {toOutputPreview(output)}
+            {outputLineCount > 1 ? ` (${outputLineCount} lines)` : ''}
           </p>
         ) : (
-          <pre className="command-exec-output-body">
+          <pre className="max-h-72 overflow-auto rounded-md border border-border/60 bg-background/80 p-2 text-xs">
             <code>{output || '(empty)'}</code>
           </pre>
         )}

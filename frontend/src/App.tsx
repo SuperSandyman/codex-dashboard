@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
+import {
+  EllipsisIcon,
+  FilePenLineIcon,
+  FolderIcon,
+  FolderPlusIcon,
+  MessageSquareIcon,
+  TerminalSquareIcon,
+  UsersIcon,
+} from 'lucide-react';
 
-import './App.css';
 import {
   type ChatApprovalDecision,
   type ChatApprovalPolicy,
@@ -57,6 +65,13 @@ import {
 import type { EditorFileBookmark } from './features/editor/bookmarks/types';
 import { TerminalPane } from './features/terminal/TerminalPane';
 import type { TerminalStreamEvent } from './features/terminal/protocol';
+import { Badge } from './components/ui/badge';
+import { Button } from './components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
+import { Input } from './components/ui/input';
+import { Select } from './components/ui/select';
+import { Textarea } from './components/ui/textarea';
+import { cn } from './lib/utils';
 
 interface ToastState {
   readonly message: string;
@@ -96,6 +111,29 @@ const EMPTY_TERMINAL_CATALOG: TerminalCatalog = {
   cwdChoices: [],
   profiles: [],
 };
+
+interface SidebarGroupChatItem {
+  readonly id: string;
+  readonly label: string;
+  readonly avatar: string;
+}
+
+interface SidebarProjectItem {
+  readonly id: string;
+  readonly label: string;
+}
+
+const SIDEBAR_GROUP_CHATS: readonly SidebarGroupChatItem[] = [
+  { id: 'group-dev-team', label: '開発チーム', avatar: 'D' },
+  { id: 'group-design', label: 'デザイン', avatar: 'U' },
+  { id: 'group-ops', label: '運用', avatar: 'O' },
+];
+
+const SIDEBAR_PROJECTS: readonly SidebarProjectItem[] = [
+  { id: 'project-codex-dashboard', label: 'codex-dashboard' },
+  { id: 'project-app-server', label: 'app-server' },
+  { id: 'project-ui-lab', label: 'ui-lab' },
+];
 
 const buildChatWsUrl = (threadId: string): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -274,6 +312,14 @@ const sortBookmarksByUpdatedAt = (
   return [...bookmarks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 };
 
+const toChatSidebarLabel = (preview: string): string => {
+  const normalized = preview.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 28) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 28)}…`;
+};
+
 /**
  * Chat と Operations Terminal を切り替えて利用するダッシュボード。
  */
@@ -315,6 +361,8 @@ const App = () => {
   const [isLoadingEditorFile, setIsLoadingEditorFile] = useState(false);
   const [isLoadingEditorBookmarks, setIsLoadingEditorBookmarks] = useState(false);
   const [isSavingEditorFile, setIsSavingEditorFile] = useState(false);
+  const [selectedGroupChatId, setSelectedGroupChatId] = useState<string | null>(SIDEBAR_GROUP_CHATS[0]?.id ?? null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(SIDEBAR_PROJECTS[0]?.id ?? null);
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -1373,192 +1421,187 @@ const App = () => {
     switchViewBySwipe(deltaX < 0 ? 'left' : 'right');
   };
 
-  const handleRefresh = () => {
-    void refreshChats();
-    void refreshLaunchCatalog();
-    void refreshTerminals();
-    void refreshTerminalCatalog();
-    void refreshEditorCatalog();
-    if (activeView === 'editor') {
-      void loadEditorTree(editorTreePath);
-    }
-  };
-
   const selectedProfile: TerminalProfile | null =
     terminalCatalog.profiles.find((profile) => profile.id === newTerminalProfileId) ?? null;
+  const toSidebarRowClassName = (isSelected: boolean): string => {
+    return cn(
+      'flex w-full items-center gap-3 rounded-none px-2.5 py-2 text-left text-sm transition-colors',
+      isSelected
+        ? 'bg-white/[0.12] text-white'
+        : 'text-[#cfcfcf] hover:bg-white/[0.06]',
+    );
+  };
 
   return (
-    <div className={`app-shell${isMenuOpen ? ' menu-open' : ''}`}>
-      <header className="app-header">
-        <div className="brand">
-          <div className="brand-mark" />
-          <div>
-            <div className="brand-title">Codex Dashboard</div>
-          </div>
-        </div>
-        <div className="header-actions">
-          <button
-            className="button button-secondary menu-toggle"
-            type="button"
-            onClick={() => setIsMenuOpen((prev) => !prev)}
-          >
-            Menu
-          </button>
-          <button
-            className="button button-primary"
-            type="button"
-            onClick={() => {
-              setCreateMode(activeView === 'terminal' ? 'terminal' : 'chat');
-              setIsCreatePanelOpen((prev) => !prev);
-            }}
-            disabled={isLoadingChats || isCreatingTerminal}
-          >
-            New Session
-          </button>
-          <button
-            className="button button-secondary mobile-hidden"
-            type="button"
-            onClick={handleRefresh}
-            disabled={isLoadingChats || isLoadingCatalog || isLoadingTerminals || isLoadingTerminalCatalog}
-          >
-            Refresh
-          </button>
-        </div>
-      </header>
-
-      <section className="view-tabs" role="tablist" aria-label="views">
-        <button
-          className={`view-tab${activeView === 'chat' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeView === 'chat'}
-          onClick={() => switchView('chat')}
-        >
-          Chat
-        </button>
-        <button
-          className={`view-tab${activeView === 'terminal' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeView === 'terminal'}
-          onClick={() => switchView('terminal')}
-        >
-          Terminal
-        </button>
-        <button
-          className={`view-tab${activeView === 'editor' ? ' active' : ''}`}
-          type="button"
-          role="tab"
-          aria-selected={activeView === 'editor'}
-          onClick={() => switchView('editor')}
-        >
-          Editor
-        </button>
-      </section>
-
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#212121] text-[#ececec]">
       {isCreatePanelOpen ? (
-        <section className="new-chat-panel">
-          <div className="section-title">New Session</div>
-          <div className="create-mode-tabs">
-            <button
-              className={`create-mode-tab${createMode === 'chat' ? ' active' : ''}`}
-              type="button"
-              onClick={() => setCreateMode('chat')}
-            >
-              Chat
-            </button>
-            <button
-              className={`create-mode-tab${createMode === 'terminal' ? ' active' : ''}`}
-              type="button"
-              onClick={() => setCreateMode('terminal')}
-            >
-              Terminal
-            </button>
-          </div>
+        <section className="relative z-10 px-3 pt-3">
+          <Card className="border-white/10 bg-[#171717]">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-base">New Session</CardTitle>
+                <div className="inline-flex rounded-md border border-white/10 bg-white/[0.03] p-1">
+                  <Button
+                    variant={createMode === 'chat' ? 'default' : 'ghost'}
+                    size="sm"
+                    type="button"
+                    onClick={() => setCreateMode('chat')}
+                  >
+                    Chat
+                  </Button>
+                  <Button
+                    variant={createMode === 'terminal' ? 'default' : 'ghost'}
+                    size="sm"
+                    type="button"
+                    onClick={() => setCreateMode('terminal')}
+                  >
+                    Terminal
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-3 pt-0">
 
-          {createMode === 'chat' ? (
-            <>
-              <label className="field-block">
-                <span>Model</span>
-                <select
-                  className="field-input"
-                  value={newChatLaunchOptions.model ?? ''}
-                  disabled={isLoadingCatalog || modelOptions.length === 0}
-                  onChange={(event) => {
-                    const nextModel = event.target.value.length > 0 ? event.target.value : null;
-                    setNewChatLaunchOptions((prev) => {
-                      const nextEffort = resolveEffortForModel(modelOptions, nextModel, prev.effort);
-                      return {
-                        ...prev,
-                        model: nextModel,
-                        effort: nextEffort,
-                      };
-                    });
-                  }}
-                >
-                  {modelOptions.length === 0 ? <option value="">No models available</option> : null}
-                  {modelOptions.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.displayName}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {createMode === 'chat' ? (
+                <>
+                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    <label className="grid gap-1 text-xs text-muted-foreground">
+                      <span>Model</span>
+                      <Select
+                        value={newChatLaunchOptions.model ?? ''}
+                        disabled={isLoadingCatalog || modelOptions.length === 0}
+                        onChange={(event) => {
+                          const nextModel = event.target.value.length > 0 ? event.target.value : null;
+                          setNewChatLaunchOptions((prev) => {
+                            const nextEffort = resolveEffortForModel(modelOptions, nextModel, prev.effort);
+                            return {
+                              ...prev,
+                              model: nextModel,
+                              effort: nextEffort,
+                            };
+                          });
+                        }}
+                      >
+                        {modelOptions.length === 0 ? <option value="">No models available</option> : null}
+                        {modelOptions.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.displayName}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
 
-              <label className="field-block">
-                <span>Effort</span>
-                <select
-                  className="field-input"
-                  value={newChatLaunchOptions.effort ?? ''}
-                  disabled={isLoadingCatalog || !newChatLaunchOptions.model || newChatEfforts.length === 0}
-                  onChange={(event) => {
-                    const nextEffort = event.target.value.length > 0 ? event.target.value : null;
-                    setNewChatLaunchOptions((prev) => {
-                      return {
-                        ...prev,
-                        effort: nextEffort,
-                      };
-                    });
-                  }}
-                >
-                  <option value="">Model default</option>
-                  {newChatEfforts.map((effort) => (
-                    <option key={effort} value={effort}>
-                      {effort}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                    <label className="grid gap-1 text-xs text-muted-foreground">
+                      <span>Effort</span>
+                      <Select
+                        value={newChatLaunchOptions.effort ?? ''}
+                        disabled={isLoadingCatalog || !newChatLaunchOptions.model || newChatEfforts.length === 0}
+                        onChange={(event) => {
+                          const nextEffort = event.target.value.length > 0 ? event.target.value : null;
+                          setNewChatLaunchOptions((prev) => {
+                            return {
+                              ...prev,
+                              effort: nextEffort,
+                            };
+                          });
+                        }}
+                      >
+                        <option value="">Model default</option>
+                        {newChatEfforts.map((effort) => (
+                          <option key={effort} value={effort}>
+                            {effort}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
 
-              <label className="field-block">
-                <span>Directory</span>
-                <div className="directory-picker">
-                  <input
-                    className="field-input"
-                    list="new-session-chat-directory-options"
-                    value={newChatLaunchOptions.cwd ?? ''}
-                    disabled={isLoadingCatalog || workspaceRoot === null}
-                    placeholder={
-                      workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'
-                    }
-                    onChange={(event) => {
-                      const nextCwd = resolveDirectoryInputValue(workspaceRoot, event.target.value);
-                      setNewChatLaunchOptions((prev) => {
-                        return {
-                          ...prev,
-                          cwd: nextCwd,
-                        };
-                      });
-                    }}
-                  />
-                  <datalist id="new-session-chat-directory-options">
-                    {chatDirectoryOptions.map((cwd) => (
-                      <option key={cwd} value={cwd} />
-                    ))}
-                  </datalist>
-                  <div className="directory-picker-actions">
-                    <button
-                      className="button button-secondary directory-picker-button"
+                    <label className="grid gap-1 text-xs text-muted-foreground">
+                      <span>Approval Policy</span>
+                      <Select
+                        value={newChatLaunchOptions.approvalPolicy ?? ''}
+                        disabled={isLoadingCatalog || approvalPolicyOptions.length === 0}
+                        onChange={(event) => {
+                          const nextPolicy = event.target.value.length > 0 ? event.target.value : null;
+                          setNewChatLaunchOptions((prev) => {
+                            return {
+                              ...prev,
+                              approvalPolicy: nextPolicy as ChatApprovalPolicy | null,
+                            };
+                          });
+                        }}
+                      >
+                        {approvalPolicyOptions.length > 0 ? <option value="">Config default</option> : null}
+                        {approvalPolicyOptions.length === 0 ? <option value="">No policies available</option> : null}
+                        {approvalPolicyOptions.map((policy) => (
+                          <option key={policy} value={policy}>
+                            {formatApprovalPolicyLabel(policy)}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="grid gap-1 text-xs text-muted-foreground">
+                      <span>Directory</span>
+                      <Input
+                        list="new-session-chat-directory-options"
+                        value={newChatLaunchOptions.cwd ?? ''}
+                        disabled={isLoadingCatalog || workspaceRoot === null}
+                        placeholder={workspaceRoot ? `Workspace default (${workspaceRoot})` : 'WORKSPACE_ROOT not configured'}
+                        onChange={(event) => {
+                          const nextCwd = resolveDirectoryInputValue(workspaceRoot, event.target.value);
+                          setNewChatLaunchOptions((prev) => {
+                            return {
+                              ...prev,
+                              cwd: nextCwd,
+                            };
+                          });
+                        }}
+                      />
+                      <datalist id="new-session-chat-directory-options">
+                        {chatDirectoryOptions.map((cwd) => (
+                          <option key={cwd} value={cwd} />
+                        ))}
+                      </datalist>
+                    </label>
+
+                    <label className="grid gap-1 text-xs text-muted-foreground">
+                      <span>Sandbox Mode</span>
+                      <Select
+                        value={newChatLaunchOptions.sandboxMode ?? ''}
+                        disabled={isLoadingCatalog || sandboxModeOptions.length === 0}
+                        onChange={(event) => {
+                          const nextMode = event.target.value.length > 0 ? event.target.value : null;
+                          if (nextMode === 'danger-full-access') {
+                            const accepted = window.confirm('Danger Full Access disables filesystem sandboxing. Continue?');
+                            if (!accepted) {
+                              return;
+                            }
+                          }
+                          setNewChatLaunchOptions((prev) => {
+                            return {
+                              ...prev,
+                              sandboxMode: nextMode as ChatSandboxMode | null,
+                            };
+                          });
+                        }}
+                      >
+                        {sandboxModeOptions.length > 0 ? <option value="">Config default</option> : null}
+                        {sandboxModeOptions.length === 0 ? <option value="">No sandbox modes available</option> : null}
+                        {sandboxModeOptions.map((mode) => (
+                          <option key={mode} value={mode}>
+                            {formatSandboxModeLabel(mode)}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
                       type="button"
                       disabled={workspaceRoot === null}
                       onClick={() => {
@@ -1571,9 +1614,10 @@ const App = () => {
                       }}
                     >
                       Workspace default
-                    </button>
-                    <button
-                      className="button button-secondary directory-picker-button"
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       type="button"
                       disabled={workspaceRoot === null || isLoadingSessionDirectories}
                       onClick={() => {
@@ -1581,162 +1625,100 @@ const App = () => {
                       }}
                     >
                       Reload list
-                    </button>
+                    </Button>
+                    <Badge variant="outline">
+                      {isLoadingSessionDirectories ? 'Loading directories...' : 'Directory suggestions ready'}
+                    </Badge>
+                    {sessionDirectoryError ? <Badge variant="destructive">{sessionDirectoryError}</Badge> : null}
                   </div>
-                  <details className="directory-picker-suggestions">
-                    <summary>Suggestions</summary>
-                    <div className="directory-picker-list">
-                      {chatDirectoryOptions.slice(0, 36).map((cwd) => (
-                        <button
-                          key={cwd}
-                          type="button"
-                          className={`directory-option${newChatLaunchOptions.cwd === cwd ? ' selected' : ''}`}
-                          onClick={() => {
-                            setNewChatLaunchOptions((prev) => {
-                              return {
-                                ...prev,
-                                cwd,
-                              };
-                            });
-                          }}
-                          title={cwd}
-                        >
-                          {toDirectoryOptionLabel(workspaceRoot, cwd)}
-                        </button>
-                      ))}
-                    </div>
-                  </details>
-                  <span className="directory-picker-meta">
-                    {isLoadingSessionDirectories
-                      ? 'Loading directories...'
-                      : 'Suggestions include workspace root children and second-level directories.'}
-                    {sessionDirectoryError ? ` (${sessionDirectoryError})` : ''}
-                  </span>
-                </div>
-              </label>
 
-              <label className="field-block">
-                <span>Approval Policy</span>
-                <select
-                  className="field-input"
-                  value={newChatLaunchOptions.approvalPolicy ?? ''}
-                  disabled={isLoadingCatalog || approvalPolicyOptions.length === 0}
-                  onChange={(event) => {
-                    const nextPolicy = event.target.value.length > 0 ? event.target.value : null;
-                    setNewChatLaunchOptions((prev) => {
-                      return {
-                        ...prev,
-                        approvalPolicy: nextPolicy as ChatApprovalPolicy | null,
-                      };
-                    });
-                  }}
-                >
-                  {approvalPolicyOptions.length > 0 ? <option value="">Config default</option> : null}
-                  {approvalPolicyOptions.length === 0 ? <option value="">No policies available</option> : null}
-                  {approvalPolicyOptions.map((policy) => (
-                    <option key={policy} value={policy}>
-                      {formatApprovalPolicyLabel(policy)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field-block">
-                <span>Sandbox Mode</span>
-                <select
-                  className="field-input"
-                  value={newChatLaunchOptions.sandboxMode ?? ''}
-                  disabled={isLoadingCatalog || sandboxModeOptions.length === 0}
-                  onChange={(event) => {
-                    const nextMode = event.target.value.length > 0 ? event.target.value : null;
-                    if (nextMode === 'danger-full-access') {
-                      const accepted = window.confirm(
-                        'Danger Full Access disables filesystem sandboxing. Continue?',
-                      );
-                      if (!accepted) {
-                        return;
-                      }
-                    }
-                    setNewChatLaunchOptions((prev) => {
-                      return {
-                        ...prev,
-                        sandboxMode: nextMode as ChatSandboxMode | null,
-                      };
-                    });
-                  }}
-                >
-                  {sandboxModeOptions.length > 0 ? <option value="">Config default</option> : null}
-                  {sandboxModeOptions.length === 0 ? <option value="">No sandbox modes available</option> : null}
-                  {sandboxModeOptions.map((mode) => (
-                    <option key={mode} value={mode}>
-                      {formatSandboxModeLabel(mode)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field-block new-chat-prompt-field">
-                <span>Prompt</span>
-                <textarea
-                  className="field-input new-chat-prompt"
-                  placeholder="Type the first prompt..."
-                  value={newChatPrompt}
-                  onChange={(event) => setNewChatPrompt(event.target.value)}
-                  disabled={isLoadingChats}
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              <label className="field-block">
-                <span>Profile</span>
-                <select
-                  className="field-input"
-                  value={newTerminalProfileId ?? ''}
-                  disabled={isLoadingTerminalCatalog || terminalCatalog.profiles.length === 0}
-                  onChange={(event) => {
-                    const value = event.target.value.trim();
-                    setNewTerminalProfileId(value.length > 0 ? value : null);
-                  }}
-                >
-                  {terminalCatalog.profiles.length === 0 ? <option value="">No profiles available</option> : null}
-                  {terminalCatalog.profiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field-block">
-                <span>Directory</span>
-                <div className="directory-picker">
-                  <input
-                    className="field-input"
-                    list="new-session-terminal-directory-options"
-                    value={newTerminalCwd ?? ''}
-                    disabled={isLoadingTerminalCatalog || terminalCatalog.workspaceRoot === null}
-                    placeholder={
-                      terminalCatalog.workspaceRoot
-                        ? `Workspace default (${terminalCatalog.workspaceRoot})`
-                        : 'WORKSPACE_ROOT not configured'
-                    }
-                    onChange={(event) => {
-                      const nextCwd = resolveDirectoryInputValue(
-                        terminalCatalog.workspaceRoot,
-                        event.target.value,
-                      );
-                      setNewTerminalCwd(nextCwd);
-                    }}
-                  />
-                  <datalist id="new-session-terminal-directory-options">
-                    {terminalDirectoryOptions.map((cwd) => (
-                      <option key={cwd} value={cwd} />
+                  <div className="flex max-h-20 flex-wrap gap-1 overflow-y-auto rounded-md border border-border/60 bg-background/60 p-2">
+                    {chatDirectoryOptions.slice(0, 24).map((cwd) => (
+                      <button
+                        key={cwd}
+                        type="button"
+                        className={cn(
+                          'rounded-full border px-2 py-0.5 text-xs',
+                          newChatLaunchOptions.cwd === cwd
+                            ? 'border-primary/60 bg-primary/15 text-primary'
+                            : 'border-border/60 hover:bg-accent/70',
+                        )}
+                        onClick={() => {
+                          setNewChatLaunchOptions((prev) => {
+                            return {
+                              ...prev,
+                              cwd,
+                            };
+                          });
+                        }}
+                        title={cwd}
+                      >
+                        {toDirectoryOptionLabel(workspaceRoot, cwd)}
+                      </button>
                     ))}
-                  </datalist>
-                  <div className="directory-picker-actions">
-                    <button
-                      className="button button-secondary directory-picker-button"
+                  </div>
+
+                  <label className="grid gap-1 text-xs text-muted-foreground">
+                    <span>Prompt</span>
+                    <Textarea
+                      className="min-h-24"
+                      placeholder="Type the first prompt..."
+                      value={newChatPrompt}
+                      onChange={(event) => setNewChatPrompt(event.target.value)}
+                      disabled={isLoadingChats}
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="grid gap-1 text-xs text-muted-foreground">
+                      <span>Profile</span>
+                      <Select
+                        value={newTerminalProfileId ?? ''}
+                        disabled={isLoadingTerminalCatalog || terminalCatalog.profiles.length === 0}
+                        onChange={(event) => {
+                          const value = event.target.value.trim();
+                          setNewTerminalProfileId(value.length > 0 ? value : null);
+                        }}
+                      >
+                        {terminalCatalog.profiles.length === 0 ? <option value="">No profiles available</option> : null}
+                        {terminalCatalog.profiles.map((profile) => (
+                          <option key={profile.id} value={profile.id}>
+                            {profile.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
+
+                    <label className="grid gap-1 text-xs text-muted-foreground">
+                      <span>Directory</span>
+                      <Input
+                        list="new-session-terminal-directory-options"
+                        value={newTerminalCwd ?? ''}
+                        disabled={isLoadingTerminalCatalog || terminalCatalog.workspaceRoot === null}
+                        placeholder={
+                          terminalCatalog.workspaceRoot
+                            ? `Workspace default (${terminalCatalog.workspaceRoot})`
+                            : 'WORKSPACE_ROOT not configured'
+                        }
+                        onChange={(event) => {
+                          const nextCwd = resolveDirectoryInputValue(terminalCatalog.workspaceRoot, event.target.value);
+                          setNewTerminalCwd(nextCwd);
+                        }}
+                      />
+                      <datalist id="new-session-terminal-directory-options">
+                        {terminalDirectoryOptions.map((cwd) => (
+                          <option key={cwd} value={cwd} />
+                        ))}
+                      </datalist>
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
                       type="button"
                       disabled={terminalCatalog.workspaceRoot === null}
                       onClick={() => {
@@ -1744,9 +1726,10 @@ const App = () => {
                       }}
                     >
                       Workspace default
-                    </button>
-                    <button
-                      className="button button-secondary directory-picker-button"
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       type="button"
                       disabled={terminalCatalog.workspaceRoot === null || isLoadingSessionDirectories}
                       onClick={() => {
@@ -1754,159 +1737,249 @@ const App = () => {
                       }}
                     >
                       Reload list
-                    </button>
+                    </Button>
                   </div>
-                  <details className="directory-picker-suggestions">
-                    <summary>Suggestions</summary>
-                    <div className="directory-picker-list">
-                      {terminalDirectoryOptions.slice(0, 36).map((cwd) => (
-                        <button
-                          key={cwd}
-                          type="button"
-                          className={`directory-option${newTerminalCwd === cwd ? ' selected' : ''}`}
-                          onClick={() => {
-                            setNewTerminalCwd(cwd);
-                          }}
-                          title={cwd}
-                        >
-                          {toDirectoryOptionLabel(terminalCatalog.workspaceRoot, cwd)}
-                        </button>
-                      ))}
-                    </div>
-                  </details>
-                  <span className="directory-picker-meta">
-                    {isLoadingSessionDirectories
-                      ? 'Loading directories...'
-                      : 'Suggestions include workspace root children and second-level directories.'}
-                    {sessionDirectoryError ? ` (${sessionDirectoryError})` : ''}
-                  </span>
-                </div>
-              </label>
 
-              <div className="field-block">
-                <span>Command</span>
-                <input
-                  className="field-input"
-                  value={selectedProfile ? `${selectedProfile.command} ${selectedProfile.args.join(' ')}`.trim() : ''}
-                  disabled
-                />
+                  <div className="flex max-h-20 flex-wrap gap-1 overflow-y-auto rounded-md border border-border/60 bg-background/60 p-2">
+                    {terminalDirectoryOptions.slice(0, 24).map((cwd) => (
+                      <button
+                        key={cwd}
+                        type="button"
+                        className={cn(
+                          'rounded-full border px-2 py-0.5 text-xs',
+                          newTerminalCwd === cwd
+                            ? 'border-primary/60 bg-primary/15 text-primary'
+                            : 'border-border/60 hover:bg-accent/70',
+                        )}
+                        onClick={() => {
+                          setNewTerminalCwd(cwd);
+                        }}
+                        title={cwd}
+                      >
+                        {toDirectoryOptionLabel(terminalCatalog.workspaceRoot, cwd)}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="grid gap-1 text-xs text-muted-foreground">
+                    <span>Command</span>
+                    <Input
+                      value={selectedProfile ? `${selectedProfile.command} ${selectedProfile.args.join(' ')}`.trim() : ''}
+                      disabled
+                    />
+                  </label>
+                </>
+              )}
+
+              <div className="flex items-center justify-end gap-2 border-t border-border/60 pt-3">
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => setIsCreatePanelOpen(false)}
+                  disabled={isLoadingChats || isCreatingTerminal}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={createMode === 'chat' ? handleCreateChat : handleCreateTerminal}
+                  disabled={createMode === 'chat' ? isLoadingChats : isCreatingTerminal || !newTerminalProfileId}
+                >
+                  {createMode === 'chat' ? 'Create Chat' : 'Create Terminal'}
+                </Button>
               </div>
-            </>
-          )}
-
-          <div className="new-chat-panel-actions">
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={() => setIsCreatePanelOpen(false)}
-              disabled={isLoadingChats || isCreatingTerminal}
-            >
-              Cancel
-            </button>
-            <button
-              className="button button-primary"
-              type="button"
-              onClick={createMode === 'chat' ? handleCreateChat : handleCreateTerminal}
-              disabled={
-                createMode === 'chat'
-                  ? isLoadingChats
-                  : isCreatingTerminal || !newTerminalProfileId
-              }
-            >
-              {createMode === 'chat' ? 'Create Chat' : 'Create Terminal'}
-            </button>
-          </div>
+            </CardContent>
+          </Card>
         </section>
       ) : null}
 
-      <main className="app-body">
+      <main className="relative z-10 flex min-h-0 flex-1 gap-0 p-0">
+        <Button
+          className="fixed left-3 top-3 z-40 md:hidden"
+          variant="outline"
+          size="sm"
+          type="button"
+          onClick={() => setIsMenuOpen((prev) => !prev)}
+        >
+          Menu
+        </Button>
+
         <div
-          className={`sidebar-backdrop${isMenuOpen ? ' visible' : ''}`}
+          className={cn(
+            'fixed inset-0 z-20 bg-black/55 backdrop-blur-sm md:hidden',
+            isMenuOpen ? 'block' : 'hidden',
+          )}
           onClick={() => setIsMenuOpen(false)}
         />
-        <aside className="sidebar">
-          <div className="section-title">
-            {activeView === 'chat' ? 'Chats' : activeView === 'terminal' ? 'Terminals' : 'Editor'}
-          </div>
-          {activeView === 'chat' ? (
-            <div className="chat-list">
-              {chats.length === 0 ? <div className="chat-list-empty">No chats yet.</div> : null}
-              {chats.map((chat) => {
-                const isSelected = chat.id === selectedChatId;
-                return (
-                  <article
-                    key={chat.id}
-                    className={`chat-list-item${isSelected ? ' selected' : ''}`}
+
+        <aside
+          className={cn(
+            'fixed inset-y-0 left-0 z-30 w-[17rem] max-w-[90vw] overflow-y-auto bg-[#181818] p-3 shadow-xl transition-transform md:static md:z-auto md:w-72 md:max-w-none md:translate-x-0 md:bg-transparent md:p-0 md:shadow-none',
+            isMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+          )}
+        >
+          <Card className="h-full min-h-0 rounded-none border-white/10 bg-[#181818]">
+            <CardContent className="flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2">
+              <div className="grid gap-1">
+                <button
+                  type="button"
+                  className={toSidebarRowClassName(false)}
+                  onClick={() => {
+                    setCreateMode('chat');
+                    setIsCreatePanelOpen(true);
+                    switchView('chat');
+                    setIsMenuOpen(false);
+                  }}
+                >
+                  <MessageSquareIcon className="size-4" />
+                  <span>新しいチャット</span>
+                </button>
+                <button
+                  type="button"
+                  className={toSidebarRowClassName(activeView === 'terminal')}
+                  onClick={() => {
+                    switchView('terminal');
+                    setIsMenuOpen(false);
+                  }}
+                >
+                  <TerminalSquareIcon className="size-4" />
+                  <span>ターミナル</span>
+                  {isLoadingTerminals ? <span className="ml-auto text-[10px] text-[#8d8d8d]">読み込み中</span> : null}
+                </button>
+                <button
+                  type="button"
+                  className={toSidebarRowClassName(activeView === 'editor')}
+                  onClick={() => {
+                    switchView('editor');
+                    setIsMenuOpen(false);
+                  }}
+                >
+                  <FilePenLineIcon className="size-4" />
+                  <span>エディタ</span>
+                </button>
+              </div>
+
+              <div className="grid gap-1">
+                <button
+                  type="button"
+                  className={toSidebarRowClassName(false)}
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    showToast('プロジェクト作成UIは準備中です');
+                  }}
+                >
+                  <FolderPlusIcon className="size-4" />
+                  <span>プロジェクトを新規作成</span>
+                </button>
+                {SIDEBAR_PROJECTS.map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    className={toSidebarRowClassName(selectedProjectId === project.id)}
                     onClick={() => {
-                      setSelectedChatId(chat.id);
+                      setSelectedProjectId(project.id);
                       setIsMenuOpen(false);
                     }}
                   >
-                    <div className="chat-list-title">{chat.preview || '(untitled)'}</div>
-                    <div className="chat-list-meta">
-                      <span>{chat.source}</span>
-                      <span>{formatRelative(chat.updatedAt)}</span>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          ) : null}
+                    <FolderIcon className="size-4" />
+                    <span className="truncate">{project.label}</span>
+                  </button>
+                ))}
+                <button type="button" className={toSidebarRowClassName(false)}>
+                  <EllipsisIcon className="size-4" />
+                  <span>… 詳細</span>
+                </button>
+              </div>
 
-          {activeView === 'terminal' ? (
-            <div className="chat-list">
-              {terminals.length === 0 ? <div className="chat-list-empty">No terminals yet.</div> : null}
-              {terminals.map((terminal) => {
-                const isSelected = terminal.id === selectedTerminalId;
-                return (
-                  <article
-                    key={terminal.id}
-                    className={`chat-list-item${isSelected ? ' selected' : ''}`}
+              <div className="h-px bg-white/10" />
+
+              <div className="grid gap-1.5">
+                <p className="px-1 text-[11px] text-[#8d8d8d]">グループチャット</p>
+                {SIDEBAR_GROUP_CHATS.map((group) => (
+                  <button
+                    key={group.id}
+                    type="button"
+                    className={toSidebarRowClassName(selectedGroupChatId === group.id)}
                     onClick={() => {
-                      setSelectedTerminalId(terminal.id);
+                      setSelectedGroupChatId(group.id);
+                      switchView('chat');
                       setIsMenuOpen(false);
                     }}
                   >
-                    <div className="chat-list-title">{terminal.profileId}</div>
-                    <div className="chat-list-meta">
-                      <span>{terminal.status}</span>
-                      <span>{formatRelative(terminal.updatedAt)}</span>
-                    </div>
-                    <div className="terminal-list-output">{terminal.lastOutput || '(no output yet)'}</div>
-                  </article>
-                );
-              })}
-            </div>
-          ) : null}
+                    <UsersIcon className="size-4" />
+                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                    <span className="inline-flex size-5 items-center justify-center rounded-full bg-white/12 text-[10px] text-[#dfdfdf]">
+                      {group.avatar}
+                    </span>
+                  </button>
+                ))}
+              </div>
 
-          {activeView === 'editor' ? (
-            <FileTree
-              currentPath={editorTreePath}
-              selectedFilePath={selectedFilePath}
-              isLoading={isLoadingEditorCatalog || isLoadingEditorTree}
-              isLoadingBookmarks={isLoadingEditorBookmarks}
-              bookmarkPendingPath={bookmarkPendingPath}
-              bookmarks={editorBookmarks}
-              nodes={editorTreeNodes}
-              errorMessage={
-                editorWorkspaceRoot === null
-                  ? 'WORKSPACE_ROOT is not configured.'
-                  : editorLoadError
-              }
-              onOpenDirectory={handleOpenEditorDirectory}
-              onSelectFile={handleSelectEditorFile}
-              onSelectBookmark={handleSelectEditorBookmark}
-            />
-          ) : null}
+              <div className="grid gap-1.5 pb-2">
+                <p className="px-1 text-[11px] text-[#8d8d8d]">あなたのチャット</p>
+                {chats.length === 0 ? (
+                  <div className="px-2 py-2 text-sm text-[#9f9f9f]">チャット履歴はまだありません</div>
+                ) : null}
+                {chats.map((chat, index) => {
+                  const isSelected = chat.id === selectedChatId;
+                  return (
+                    <button
+                      key={chat.id}
+                      type="button"
+                      className={toSidebarRowClassName(isSelected)}
+                      onClick={() => {
+                        setSelectedChatId(chat.id);
+                        switchView('chat');
+                        setIsMenuOpen(false);
+                      }}
+                    >
+                      <MessageSquareIcon className="size-4" />
+                      <span className="min-w-0 flex-1 truncate">{toChatSidebarLabel(chat.preview || '(untitled)')}</span>
+                      <span
+                        className={cn(
+                          'size-1.5 rounded-full',
+                          !isSelected && index < 2 ? 'bg-white/70' : 'bg-transparent',
+                        )}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {activeView === 'editor' ? (
+                <div className="rounded-xl border border-white/10 bg-black/20 p-2">
+                  <div className="mb-2 px-1 text-[11px] text-[#8d8d8d]">エディタファイル</div>
+                  <FileTree
+                    currentPath={editorTreePath}
+                    selectedFilePath={selectedFilePath}
+                    isLoading={isLoadingEditorCatalog || isLoadingEditorTree}
+                    isLoadingBookmarks={isLoadingEditorBookmarks}
+                    bookmarkPendingPath={bookmarkPendingPath}
+                    bookmarks={editorBookmarks}
+                    nodes={editorTreeNodes}
+                    errorMessage={
+                      editorWorkspaceRoot === null
+                        ? 'WORKSPACE_ROOT is not configured.'
+                        : editorLoadError
+                    }
+                    onOpenDirectory={handleOpenEditorDirectory}
+                    onSelectFile={handleSelectEditorFile}
+                    onSelectBookmark={handleSelectEditorBookmark}
+                  />
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         </aside>
 
         <section
-          className="main-panel"
+          className="min-h-0 flex-1"
           onTouchStart={handleMobileSwitcherTouchStart}
           onTouchEnd={handleMobileSwitcherTouchEnd}
         >
-          <div className={`view-pane${activeView === 'chat' ? ' active' : ''}`}>
+          {activeView === 'chat' ? (
             <ChatPane
+              key={selectedChatId ?? 'chat-none'}
               chatId={selectedChatId}
               messages={messages}
               activeTurnId={activeTurnId}
@@ -1927,9 +2000,9 @@ const App = () => {
               onRespondUserInput={handleRespondUserInput}
               onUpdateLaunchOptions={handleUpdateSelectedLaunchOptions}
             />
-          </div>
+          ) : null}
 
-          <div className={`view-pane${activeView === 'terminal' ? ' active' : ''}`}>
+          {activeView === 'terminal' ? (
             <TerminalPane
               terminalId={selectedTerminalId}
               status={selectedTerminal?.status ?? null}
@@ -1938,43 +2011,60 @@ const App = () => {
               onKill={handleKillTerminal}
               isKillDisabled={!selectedTerminalId || selectedTerminal?.status !== 'running'}
             />
-          </div>
+          ) : null}
 
-          <div className={`view-pane${activeView === 'editor' ? ' active' : ''}`}>
-            <div className="chat-card editor-placeholder">
-              <EditorPane
-                filePath={selectedFilePath}
-                content={editorContent}
-                isLoading={isLoadingEditorFile}
-                isSaving={isSavingEditorFile}
-                isDirty={isEditorDirty}
-                isBookmarked={isSelectedFileBookmarked}
-                errorMessage={
-                  editorWorkspaceRoot === null
-                    ? 'WORKSPACE_ROOT is not configured.'
-                    : editorLoadError
-                }
-                saveErrorMessage={editorSaveError}
-                saveStatusMessage={editorSaveStatus}
-                onChange={(value) => {
-                  setEditorContent(value);
-                  setEditorSaveError(null);
-                  setEditorSaveStatus(editorUpdatedAt ? `Loaded ${formatRelative(editorUpdatedAt)}` : null);
-                }}
-                onSave={handleSaveEditorFile}
-                onToggleBookmark={() => {
-                  void handleToggleEditorBookmark();
-                }}
-              />
-            </div>
-          </div>
+          {activeView === 'editor' ? (
+            <Card className="h-full min-h-0 border-white/10 bg-[#171717]">
+              <CardContent className="h-full min-h-0 p-3">
+                <EditorPane
+                  filePath={selectedFilePath}
+                  content={editorContent}
+                  isLoading={isLoadingEditorFile}
+                  isSaving={isSavingEditorFile}
+                  isDirty={isEditorDirty}
+                  isBookmarked={isSelectedFileBookmarked}
+                  errorMessage={editorWorkspaceRoot === null ? 'WORKSPACE_ROOT is not configured.' : editorLoadError}
+                  saveErrorMessage={editorSaveError}
+                  saveStatusMessage={editorSaveStatus}
+                  onChange={(value) => {
+                    setEditorContent(value);
+                    setEditorSaveError(null);
+                    setEditorSaveStatus(editorUpdatedAt ? `Loaded ${formatRelative(editorUpdatedAt)}` : null);
+                  }}
+                  onSave={handleSaveEditorFile}
+                  onToggleBookmark={() => {
+                    void handleToggleEditorBookmark();
+                  }}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
         </section>
       </main>
 
-      {toast ? <div className="toast">{toast.message}</div> : null}
-      {activeView === 'chat' && selectedChat ? <div className="footer-id">Chat ID: {selectedChat.id}</div> : null}
-      {activeView === 'terminal' && selectedTerminal ? <div className="footer-id">Terminal ID: {selectedTerminal.id}</div> : null}
-      {activeView === 'editor' && selectedFilePath ? <div className="footer-id">File: {selectedFilePath}</div> : null}
+      {toast ? (
+        <div className="pointer-events-none absolute right-3 bottom-3 z-40 rounded-lg border border-white/20 bg-[#2a2a2a] px-3 py-2 text-sm text-[#ececec] shadow-lg shadow-black/30">
+          {toast.message}
+        </div>
+      ) : null}
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center pb-1">
+        {activeView === 'chat' && selectedChat ? (
+          <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
+            Chat ID: {selectedChat.id}
+          </div>
+        ) : null}
+        {activeView === 'terminal' && selectedTerminal ? (
+          <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
+            Terminal ID: {selectedTerminal.id}
+          </div>
+        ) : null}
+        {activeView === 'editor' && selectedFilePath ? (
+          <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
+            File: {selectedFilePath}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 };

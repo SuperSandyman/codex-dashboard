@@ -5,6 +5,10 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
 import type { TerminalStatus } from '../../api/terminals';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
 import { parseTerminalStreamEvent, type TerminalStreamEvent } from './protocol';
 
 interface TerminalPaneProps {
@@ -72,7 +76,7 @@ export const TerminalPane = ({
       fontSize: 13,
       lineHeight: 1.25,
       theme: {
-        background: '#091015',
+        background: '#09090b',
       },
     });
     const fitAddon = new FitAddon();
@@ -104,7 +108,6 @@ export const TerminalPane = ({
 
   useEffect(() => {
     if (!terminalId) {
-      setConnectionState('disconnected');
       socketRef.current?.close();
       socketRef.current = null;
       terminalRef.current?.clear();
@@ -113,7 +116,7 @@ export const TerminalPane = ({
 
     const ws = new WebSocket(buildTerminalWsUrl(terminalId));
     socketRef.current = ws;
-    setConnectionState('connecting');
+    queueMicrotask(() => setConnectionState('connecting'));
 
     ws.addEventListener('open', () => {
       setConnectionState('connected');
@@ -186,39 +189,48 @@ export const TerminalPane = ({
   }, [onStreamEvent, onToast, reconnectToken, sendPayload, terminalId]);
 
   return (
-    <div className="terminal-card">
-      <div className="terminal-header">
-        <div className="chat-title">Operations Terminal</div>
-        <div className="terminal-status-row">
-          <span className={`status-dot${status === 'running' ? ' active' : ''}`} />
-          <span>{status ?? 'unknown'}</span>
-          <span className="terminal-connection">ws: {connectionState}</span>
-          <button
-            className="button button-secondary terminal-reconnect"
-            type="button"
-            onClick={() => setReconnectToken((prev) => prev + 1)}
-            disabled={!terminalId || connectionState === 'connecting'}
-          >
-            Reconnect
-          </button>
-          <button
-            className="button button-secondary terminal-kill mobile-hidden"
-            type="button"
-            onClick={onKill}
-            disabled={isKillDisabled}
-            aria-label="Kill terminal process"
-          >
-            Kill Terminal
-          </button>
+    <Card className="h-full min-h-0 border-border/60 bg-card/80">
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base">Operations Terminal</CardTitle>
+          <div className="flex items-center gap-2">
+            <Badge variant={status === 'running' ? 'success' : 'outline'}>{status ?? 'unknown'}</Badge>
+            <Badge variant={connectionState === 'connected' ? 'secondary' : 'outline'}>ws: {connectionState}</Badge>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setReconnectToken((prev) => prev + 1)}
+              disabled={!terminalId || connectionState === 'connecting'}
+            >
+              Reconnect
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={onKill}
+              disabled={isKillDisabled}
+              aria-label="Kill terminal process"
+            >
+              Kill Terminal
+            </Button>
+          </div>
         </div>
-      </div>
+      </CardHeader>
 
-      {!terminalId ? <div className="chat-empty">Select or create a terminal.</div> : null}
-      <div className="terminal-screen" ref={mountRef} />
+      <CardContent className="grid h-[calc(100%-3.5rem)] min-h-0 grid-rows-[1fr_auto] gap-2">
+        {!terminalId ? (
+          <div className="grid place-items-center rounded-xl border border-dashed border-border/60 bg-background/40 p-6 text-sm text-muted-foreground">
+            Select or create a terminal.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-black">
+            <div className="h-full min-h-0 p-2" ref={mountRef} />
+          </div>
+        )}
 
-      <div className="terminal-command-bar">
-        <input
-          className="field-input"
+        <Input
           value={commandDraft}
           onChange={(event) => setCommandDraft(event.target.value)}
           placeholder="Run command..."
@@ -240,7 +252,7 @@ export const TerminalPane = ({
             setCommandDraft('');
           }}
         />
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 };

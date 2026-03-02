@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 
-import CodeMirror from '@uiw/react-codemirror';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
+import CodeMirror from '@uiw/react-codemirror';
 
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
 import { getLanguageExtension } from './getLanguageExtension';
 
 interface EditorPaneProps {
@@ -47,46 +49,51 @@ export const EditorPane = ({
   }, [filePath]);
 
   if (!filePath) {
-    return <div className="chat-empty">Select a file from the tree.</div>;
+    return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Select a file from the tree.</div>;
   }
 
   if (isLoading) {
-    return <div className="chat-empty">Loading file...</div>;
+    return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Loading file...</div>;
   }
 
   if (errorMessage) {
-    return <div className="chat-empty">{errorMessage}</div>;
+    return <div className="grid h-full place-items-center p-6 text-sm text-red-300">{errorMessage}</div>;
   }
 
   return (
-    <div className="editor-pane">
-      <div className="editor-pane-header">
+    <div className="grid h-full min-h-0 grid-rows-[auto_auto_1fr] gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 bg-card/80 px-3 py-2">
         <div
-          className="editor-pane-title"
+          className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm text-muted-foreground"
           onTouchStart={(event) => event.stopPropagation()}
           onTouchEnd={(event) => event.stopPropagation()}
+          title={filePath}
         >
-          <span className="editor-pane-title-text">{filePath}</span>
+          {filePath}
         </div>
-        <div className="editor-pane-actions">
-          <button className="button button-secondary" type="button" onClick={onToggleBookmark}>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" type="button" onClick={onToggleBookmark}>
             {isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
-          </button>
-          <span className={`editor-dirty-badge${isDirty ? ' dirty' : ''}`}>
-            {isDirty ? 'Unsaved' : 'Saved'}
-          </span>
-          <button className="button button-primary" type="button" onClick={onSave} disabled={isSaving || !isDirty}>
+          </Button>
+          <Badge variant={isDirty ? 'destructive' : 'success'}>{isDirty ? 'Unsaved' : 'Saved'}</Badge>
+          <Button type="button" size="sm" onClick={onSave} disabled={isSaving || !isDirty}>
             {isSaving ? 'Saving...' : 'Save'}
-          </button>
+          </Button>
         </div>
       </div>
 
-      {saveErrorMessage ? <div className="editor-status editor-status-error">{saveErrorMessage}</div> : null}
-      {saveStatusMessage ? <div className="editor-status">{saveStatusMessage}</div> : null}
+      <div className="grid gap-1">
+        {saveErrorMessage ? (
+          <div className="rounded-md border border-red-300/40 bg-red-500/15 px-3 py-1.5 text-xs text-red-200">{saveErrorMessage}</div>
+        ) : null}
+        {saveStatusMessage ? (
+          <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">{saveStatusMessage}</div>
+        ) : null}
+      </div>
 
-      <div className="editor-pane-body">
+      <div className="min-h-0 overflow-hidden rounded-xl border border-border/60">
         <CodeMirror
-          className="editor-cm-root"
+          className="h-full"
           value={content}
           height="100%"
           theme={oneDark}

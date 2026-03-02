@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import type {
   ChatApprovalDecision,
@@ -11,9 +11,11 @@ import type {
   RespondChatUserInputRequest,
   ChatSandboxMode,
 } from '../../api/chats';
-import { CommandExecutionBlock } from './CommandExecutionBlock';
-import { MarkdownBlock } from './MarkdownBlock';
-import { parseCommandExecutionText } from './parseCommandExecutionText';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import { AssistantThread } from './AssistantThread';
 
 interface ChatPaneProps {
   readonly chatId: string | null;
@@ -33,33 +35,9 @@ interface ChatPaneProps {
   readonly onSend: (text: string) => void;
   readonly onStop: () => void;
   readonly onRespondApproval: (itemId: string, decision: ChatApprovalDecision) => void;
-  readonly onRespondUserInput: (
-    itemId: string,
-    payload: RespondChatUserInputRequest,
-  ) => void;
+  readonly onRespondUserInput: (itemId: string, payload: RespondChatUserInputRequest) => void;
   readonly onUpdateLaunchOptions: (nextLaunchOptions: ChatLaunchOptions) => void;
 }
-
-const getMessageTitle = (message: ChatMessage): string => {
-  if (message.role === 'tool') {
-    return 'Tool';
-  }
-  if (message.role === 'assistant') {
-    return 'Assistant';
-  }
-  if (message.role === 'system') {
-    return 'System';
-  }
-  return 'You';
-};
-
-const isReasoningMessage = (message: ChatMessage): boolean => {
-  return message.kind === 'reasoning';
-};
-
-const isCommandExecutionMessage = (message: ChatMessage): boolean => {
-  return message.kind === 'commandExecution';
-};
 
 const resolveDefaultEffort = (model: ChatModelOption | null): string | null => {
   if (!model) {
@@ -117,6 +95,7 @@ const toUserInputResponsePayload = (
   if (!isQuestionResolved(drafts, request)) {
     return null;
   }
+
   const answers: RespondChatUserInputRequest['answers'] = {};
   request.questions.forEach((question) => {
     const answer = drafts[request.itemId]?.[question.id] ?? '';
@@ -124,11 +103,12 @@ const toUserInputResponsePayload = (
       answers: [answer],
     };
   });
+
   return { answers };
 };
 
 /**
- * チャット履歴表示と Composer を提供する。
+ * ChatGPT風テーマでチャット表示し、launch options と承認系入力を同一画面に維持する。
  * @param props ChatPane プロパティ
  */
 export const ChatPane = ({
@@ -152,29 +132,8 @@ export const ChatPane = ({
   onRespondUserInput,
   onUpdateLaunchOptions,
 }: ChatPaneProps) => {
-  const [draft, setDraft] = useState('');
-  const [isComposerSettingsOpen, setIsComposerSettingsOpen] = useState(false);
   const [userInputDrafts, setUserInputDrafts] = useState<Record<string, Record<string, string>>>({});
-  const messageEndRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    messageEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length, activeTurnId]);
-
-  useEffect(() => {
-    setUserInputDrafts((prev) => {
-      const next: Record<string, Record<string, string>> = {};
-      userInputRequests.forEach((request) => {
-        const existing = prev[request.itemId] ?? {};
-        const questionAnswers: Record<string, string> = {};
-        request.questions.forEach((question) => {
-          questionAnswers[question.id] = existing[question.id] ?? '';
-        });
-        next[request.itemId] = questionAnswers;
-      });
-      return next;
-    });
-  }, [chatId, userInputRequests]);
+  const [isLaunchPanelOpen, setIsLaunchPanelOpen] = useState(false);
 
   const canSend = Boolean(chatId) && !isLoading && !isSending && !activeTurnId;
   const canStop = Boolean(chatId) && Boolean(activeTurnId);
@@ -188,15 +147,6 @@ export const ChatPane = ({
   const selectedModelOption = modelOptions.find((model) => model.id === selectedModelValue) ?? null;
   const effortOptions = selectedModelOption?.efforts ?? [];
 
-  const handleSend = () => {
-    const text = draft.trim();
-    if (!text) {
-      return;
-    }
-    onSend(text);
-    setDraft('');
-  };
-
   const handleModelChange = (rawModel: string) => {
     if (!launchOptions) {
       return;
@@ -207,10 +157,10 @@ export const ChatPane = ({
       return;
     }
 
-    const nextEffort =
-      selectedEffort && model.efforts.includes(selectedEffort)
-        ? selectedEffort
-        : resolveDefaultEffort(model);
+    const nextEffort = selectedEffort && model.efforts.includes(selectedEffort)
+      ? selectedEffort
+      : resolveDefaultEffort(model);
+
     onUpdateLaunchOptions({
       ...launchOptions,
       model: nextModel,
@@ -272,290 +222,247 @@ export const ChatPane = ({
   };
 
   return (
-    <div className="chat-card">
-      <div className="chat-header">
-        <div className="chat-header-main">
-          <div className="chat-title">Chat</div>
-          <div className="chat-status">
-            {activeTurnId ? <span className="status-dot active" /> : <span className="status-dot" />}
+    <div className="flex h-full min-h-0 flex-col rounded-2xl bg-[#212121] text-[#ececec]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+        <div className="flex items-center gap-2 text-xs">
+          <Badge className="border border-white/15 bg-white/10 text-[#cdcdcd]" variant="outline">
             {activeTurnId ? 'Streaming' : 'Idle'}
-          </div>
+          </Badge>
+          <Badge className="border border-white/15 bg-white/[0.03] text-[#b4b4b4]" variant="outline">
+            {isLoading ? 'Loading' : 'Ready'}
+          </Badge>
+          {selectedModel ? (
+            <Badge className="border border-white/15 bg-white/[0.03] text-[#b4b4b4]" variant="outline">
+              {selectedModel}
+            </Badge>
+          ) : null}
         </div>
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="border border-white/10 bg-white/[0.03] text-[#d8d8d8] hover:bg-white/10 hover:text-white"
+          disabled={!chatId || isUpdatingLaunchOptions}
+          onClick={() => setIsLaunchPanelOpen((prev) => !prev)}
+        >
+          {isLaunchPanelOpen ? 'Hide Settings' : 'Session Settings'}
+        </Button>
       </div>
 
-      <div className="chat-messages">
+      {isLaunchPanelOpen ? (
+        <div className="mx-4 mt-3 grid gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="grid gap-1 text-xs text-[#b4b4b4]">
+            <span>Model</span>
+            <Select
+              value={selectedModelValue}
+              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
+              disabled={!canEditLaunchOptions}
+              onChange={(event) => handleModelChange(event.target.value)}
+            >
+              {modelOptions.length === 0 ? <option value="">No models available</option> : null}
+              {modelOptions.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.displayName}
+                </option>
+              ))}
+            </Select>
+          </label>
+
+          <label className="grid gap-1 text-xs text-[#b4b4b4]">
+            <span>Effort</span>
+            <Select
+              value={selectedEffort ?? ''}
+              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
+              disabled={!canEditLaunchOptions || !selectedModelOption}
+              onChange={(event) => handleEffortChange(event.target.value)}
+            >
+              <option value="">Model default</option>
+              {effortOptions.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </Select>
+          </label>
+
+          <label className="grid gap-1 text-xs text-[#b4b4b4]">
+            <span>Approval</span>
+            <Select
+              value={selectedApprovalPolicy ?? ''}
+              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
+              disabled={!canEditLaunchOptions || approvalPolicyOptions.length === 0}
+              onChange={(event) => handleApprovalPolicyChange(event.target.value)}
+            >
+              <option value="">Config default</option>
+              {approvalPolicyOptions.map((policy) => (
+                <option key={policy} value={policy}>
+                  {formatApprovalPolicy(policy)}
+                </option>
+              ))}
+            </Select>
+          </label>
+
+          <label className="grid gap-1 text-xs text-[#b4b4b4]">
+            <span>Sandbox</span>
+            <Select
+              value={selectedSandboxMode ?? ''}
+              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
+              disabled={!canEditLaunchOptions || sandboxModeOptions.length === 0}
+              onChange={(event) => handleSandboxModeChange(event.target.value)}
+            >
+              <option value="">Config default</option>
+              {sandboxModeOptions.map((mode) => (
+                <option key={mode} value={mode}>
+                  {formatSandboxMode(mode)}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 pt-2">
         {!chatId ? (
-          <div className="chat-empty">Select or create a chat to start.</div>
-        ) : null}
-        {chatId && messages.length === 0 && !isLoading ? (
-          <div className="chat-empty">No messages yet. Send your first prompt.</div>
-        ) : null}
-        {userInputRequests.length > 0 ? (
-          <section className="user-input-list">
-            {userInputRequests.map((request) => {
-              const isSubmitting = submittingUserInputItemIds.includes(request.itemId);
-              const isResolved = isQuestionResolved(userInputDrafts, request);
-              return (
-                <article key={request.itemId} className="user-input-card">
-                  <header className="approval-header">
-                    <strong>Input Required</strong>
-                    <span>Tool User Input</span>
-                  </header>
-                  {request.questions.map((question) => {
-                    const current = userInputDrafts[request.itemId]?.[question.id] ?? '';
-                    const selectedOption =
-                      question.options?.find((option) => option.label === current) ?? null;
-                    const shouldUseSelect =
-                      !question.isOther && Boolean(question.options && question.options.length > 0);
-                    return (
-                      <div key={question.id} className="user-input-question">
-                        <div className="user-input-question-header">
-                          <strong>{question.header}</strong>
-                        </div>
-                        <p className="user-input-question-text">{question.question}</p>
-                        {shouldUseSelect ? (
-                          <>
-                            <select
-                              className="chat-select user-input-select"
-                              value={current}
-                              disabled={isSubmitting}
-                              onChange={(event) => {
-                                handleUserInputChange(request.itemId, question.id, event.target.value);
-                              }}
-                            >
-                              <option value="">Select an option</option>
-                              {question.options?.map((option) => (
-                                <option key={option.label} value={option.label}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                            {selectedOption ? (
-                              <p className="user-input-option-description">{selectedOption.description}</p>
-                            ) : null}
-                          </>
-                        ) : (
-                          <input
-                            className="chat-input user-input-text"
-                            type={question.isSecret ? 'password' : 'text'}
+          <div className="grid h-full place-items-center p-6 text-sm text-[#b4b4b4]">Select or create a chat to start.</div>
+        ) : (
+          <AssistantThread
+            messages={messages}
+            isRunning={Boolean(activeTurnId)}
+            onSend={(text) => {
+              if (!canSend) {
+                return;
+              }
+              onSend(text);
+            }}
+            onStop={() => {
+              if (!canStop) {
+                return;
+              }
+              onStop();
+            }}
+          />
+        )}
+      </div>
+
+      {(approvalRequests.length > 0 || userInputRequests.length > 0) ? (
+        <div className="mx-4 mb-3 mt-2 grid max-h-72 gap-2 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+          {approvalRequests.map((request) => {
+            const isSubmitting = submittingApprovalItemIds.includes(request.itemId);
+            return (
+              <div key={request.itemId} className="grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-medium text-[#ececec]">Approval Required</p>
+                  <Badge className="border border-white/10 bg-white/[0.04] text-[#b4b4b4]" variant="outline">
+                    {formatApprovalKind(request.kind)}
+                  </Badge>
+                </div>
+                {request.reason ? <p className="text-[#b4b4b4]">{request.reason}</p> : null}
+                {request.command ? (
+                  <pre className="max-h-40 overflow-auto rounded-md border border-white/10 bg-black/25 p-2 text-xs text-[#d4d4d4]">
+                    <code>{request.command}</code>
+                  </pre>
+                ) : null}
+                {request.cwd ? <div className="text-xs text-[#9f9f9f]">cwd: {request.cwd}</div> : null}
+                {request.grantRoot ? <div className="text-xs text-[#9f9f9f]">grantRoot: {request.grantRoot}</div> : null}
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="bg-[#2f2f2f] text-[#ececec] hover:bg-[#3a3a3a]"
+                    disabled={isSubmitting}
+                    onClick={() => onRespondApproval(request.itemId, 'decline')}
+                  >
+                    No
+                  </Button>
+                  <Button
+                    type="button"
+                    className="bg-white text-black hover:bg-white/90"
+                    disabled={isSubmitting}
+                    onClick={() => onRespondApproval(request.itemId, 'accept')}
+                  >
+                    Yes
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+
+          {userInputRequests.map((request) => {
+            const isSubmitting = submittingUserInputItemIds.includes(request.itemId);
+            const isResolved = isQuestionResolved(userInputDrafts, request);
+            return (
+              <div key={request.itemId} className="grid gap-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-medium text-[#ececec]">Input Required</p>
+                  <Badge className="border border-white/10 bg-white/[0.04] text-[#b4b4b4]" variant="outline">
+                    Tool User Input
+                  </Badge>
+                </div>
+
+                {request.questions.map((question) => {
+                  const current = userInputDrafts[request.itemId]?.[question.id] ?? '';
+                  const selectedOption = question.options?.find((option) => option.label === current) ?? null;
+                  const shouldUseSelect = !question.isOther && Boolean(question.options && question.options.length > 0);
+                  return (
+                    <div key={question.id} className="grid gap-1.5 rounded-md border border-white/10 bg-black/20 p-3">
+                      <div className="text-xs font-medium text-[#b4b4b4]">{question.header}</div>
+                      <p className="text-sm text-[#ececec]">{question.question}</p>
+                      {shouldUseSelect ? (
+                        <>
+                          <Select
                             value={current}
+                            className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
                             disabled={isSubmitting}
                             onChange={(event) => {
                               handleUserInputChange(request.itemId, question.id, event.target.value);
                             }}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                  <div className="approval-actions">
-                    <button
-                      className="button button-primary"
-                      type="button"
-                      disabled={isSubmitting || !isResolved}
-                      onClick={() => {
-                        const payload = toUserInputResponsePayload(userInputDrafts, request);
-                        if (!payload) {
-                          return;
-                        }
-                        onRespondUserInput(request.itemId, payload);
-                      }}
-                    >
-                      Submit
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </section>
-        ) : null}
-        {messages.map((message) => {
-          const parsedCommandExecution = isCommandExecutionMessage(message)
-            ? parseCommandExecutionText(message.text)
-            : null;
-          return (
-            <article key={message.id} className={`chat-message role-${message.role}`}>
-              <header className="chat-message-header">
-                <span>{getMessageTitle(message)}</span>
-                <span className="chat-message-kind">{message.kind}</span>
-              </header>
-              {isReasoningMessage(message) ? (
-                <details className="reasoning-details">
-                  <summary className="reasoning-summary">Reasoning (click to expand)</summary>
-                  <MarkdownBlock text={message.text || ' '} />
-                </details>
-              ) : parsedCommandExecution ? (
-                <CommandExecutionBlock
-                  command={parsedCommandExecution.command}
-                  output={parsedCommandExecution.output}
-                  exitCode={parsedCommandExecution.exitCode}
-                  status={message.status}
-                />
-              ) : (
-                <MarkdownBlock text={message.text || ' '} />
-              )}
-              {message.status && !parsedCommandExecution ? (
-                <div className="chat-message-status">{message.status}</div>
-              ) : null}
-            </article>
-          );
-        })}
-        <div ref={messageEndRef} />
-      </div>
+                          >
+                            <option value="">Select an option</option>
+                            {question.options?.map((option) => (
+                              <option key={option.label} value={option.label}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </Select>
+                          {selectedOption ? <p className="text-xs text-[#a8a8a8]">{selectedOption.description}</p> : null}
+                        </>
+                      ) : (
+                        <Input
+                          type={question.isSecret ? 'password' : 'text'}
+                          value={current}
+                          className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
+                          disabled={isSubmitting}
+                          onChange={(event) => {
+                            handleUserInputChange(request.itemId, question.id, event.target.value);
+                          }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
 
-      <div className="chat-composer">
-        {chatId && approvalRequests.length > 0 ? (
-          <section className="approval-list">
-            {approvalRequests.map((request) => {
-              const isSubmitting = submittingApprovalItemIds.includes(request.itemId);
-              return (
-                <article key={request.itemId} className="approval-card">
-                  <header className="approval-header">
-                    <strong>Approval Required</strong>
-                    <span>{formatApprovalKind(request.kind)}</span>
-                  </header>
-                  {request.reason ? <p className="approval-reason">{request.reason}</p> : null}
-                  {request.command ? (
-                    <pre className="approval-command">
-                      <code>{request.command}</code>
-                    </pre>
-                  ) : null}
-                  {request.cwd ? <div className="approval-path">cwd: {request.cwd}</div> : null}
-                  {request.grantRoot ? <div className="approval-path">grantRoot: {request.grantRoot}</div> : null}
-                  <div className="approval-actions">
-                    <button
-                      className="button button-primary"
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => onRespondApproval(request.itemId, 'accept')}
-                    >
-                      Yes
-                    </button>
-                    <button
-                      className="button button-secondary"
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => onRespondApproval(request.itemId, 'decline')}
-                    >
-                      No
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </section>
-        ) : null}
-        <textarea
-          className="chat-input"
-          placeholder="Type your prompt..."
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              handleSend();
-            }
-          }}
-          disabled={!chatId || isLoading}
-        />
-        <div className="chat-composer-row">
-          <div className="chat-actions">
-            <button className="button button-secondary" type="button" onClick={onStop} disabled={!canStop}>
-              Stop
-            </button>
-            <button className="button button-primary" type="button" onClick={handleSend} disabled={!canSend}>
-              Send
-            </button>
-          </div>
-          <button
-            className="button button-secondary chat-settings-toggle"
-            type="button"
-            onClick={() => setIsComposerSettingsOpen((prev) => !prev)}
-            aria-expanded={isComposerSettingsOpen}
-            aria-label={isComposerSettingsOpen ? 'Hide chat settings' : 'Show chat settings'}
-          >
-            {isComposerSettingsOpen ? 'Hide Settings' : 'Show Settings'}
-          </button>
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    className="bg-white text-black hover:bg-white/90"
+                    disabled={isSubmitting || !isResolved}
+                    onClick={() => {
+                      const payload = toUserInputResponsePayload(userInputDrafts, request);
+                      if (!payload) {
+                        return;
+                      }
+                      onRespondUserInput(request.itemId, payload);
+                    }}
+                  >
+                    Submit
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div
-          className={`chat-launch-settings composer-launch-settings${
-            isComposerSettingsOpen ? ' open' : ''
-          }`}
-        >
-            <label className="chat-launch-field">
-              <span>Model</span>
-              <select
-                className="chat-select"
-                value={selectedModelValue}
-                disabled={!canEditLaunchOptions}
-                onChange={(event) => handleModelChange(event.target.value)}
-              >
-                {modelOptions.length === 0 ? <option value="">No models available</option> : null}
-                {modelOptions.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="chat-launch-field">
-              <span>Effort</span>
-              <select
-                className="chat-select"
-                value={selectedEffort ?? ''}
-                disabled={!canEditLaunchOptions || !selectedModelOption}
-                onChange={(event) => handleEffortChange(event.target.value)}
-              >
-                <option value="">Model default</option>
-                {effortOptions.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="chat-launch-field">
-              <span>Approval Policy</span>
-              <select
-                className="chat-select"
-                value={selectedApprovalPolicy ?? ''}
-                disabled={!canEditLaunchOptions || approvalPolicyOptions.length === 0}
-                onChange={(event) => handleApprovalPolicyChange(event.target.value)}
-              >
-                <option value="">Default</option>
-                {approvalPolicyOptions.map((policy) => (
-                  <option key={policy} value={policy}>
-                    {formatApprovalPolicy(policy)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="chat-launch-field">
-              <span>Sandbox Mode</span>
-              <select
-                className="chat-select"
-                value={selectedSandboxMode ?? ''}
-                disabled={!canEditLaunchOptions || sandboxModeOptions.length === 0}
-                onChange={(event) => handleSandboxModeChange(event.target.value)}
-              >
-                <option value="">Default</option>
-                {sandboxModeOptions.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {formatSandboxMode(mode)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="chat-cwd-display" title={launchOptions?.cwd ?? 'workspace default'}>
-              <span>CWD</span>
-              <strong>{launchOptions?.cwd ?? 'Workspace default'}</strong>
-            </div>
-        </div>
-      </div>
+      ) : null}
     </div>
   );
 };

@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
 
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import { Separator } from '../../components/ui/separator';
 import type { EditorTreeNode } from '../../api/editor';
 import type { EditorFileBookmark } from './bookmarks/types';
 
@@ -44,113 +48,136 @@ export const FileTree = ({
   }, [currentPath]);
 
   return (
-    <div className="editor-tree">
-      <div className="editor-bookmark-section">
-        <div className="editor-bookmark-header-row">
-          <div className="editor-bookmark-header">Bookmarks ({bookmarks.length})</div>
-          <button
-            className="editor-bookmark-toggle"
-            type="button"
-            aria-expanded={isBookmarkSectionOpen}
-            onClick={() => setIsBookmarkSectionOpen((prev) => !prev)}
-          >
-            {isBookmarkSectionOpen ? 'Hide' : 'Show'}
-          </button>
+    <div className="grid h-full min-h-0 grid-rows-[auto_auto_1fr] gap-2">
+      <div className="rounded-xl border border-border/60 bg-card/80 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="text-sm font-medium">Bookmarks</div>
+          <Badge variant="outline">{bookmarks.length}</Badge>
         </div>
-        {isBookmarkSectionOpen && isLoadingBookmarks ? (
-          <div className="chat-list-empty">Loading bookmarks...</div>
+        <Button
+          className="w-full"
+          variant="outline"
+          size="sm"
+          type="button"
+          aria-expanded={isBookmarkSectionOpen}
+          onClick={() => setIsBookmarkSectionOpen((prev) => !prev)}
+        >
+          {isBookmarkSectionOpen ? 'Hide' : 'Show'}
+        </Button>
+
+        {isBookmarkSectionOpen ? (
+          <div className="mt-2 grid max-h-36 gap-1 overflow-y-auto">
+            {isLoadingBookmarks ? <div className="text-xs text-muted-foreground">Loading bookmarks...</div> : null}
+            {!isLoadingBookmarks && bookmarks.length === 0 ? (
+              <div className="text-xs text-muted-foreground">No bookmarks</div>
+            ) : null}
+            {!isLoadingBookmarks && bookmarks.length > 0
+              ? bookmarks.map((bookmark) => {
+                const isSelected = bookmark.path === selectedFilePath;
+                const isPending = bookmark.path === bookmarkPendingPath;
+                return (
+                  <button
+                    key={bookmark.path}
+                    className={`rounded-md border px-2 py-1 text-left transition-colors ${
+                      isSelected
+                        ? 'border-primary/60 bg-primary/15 text-primary'
+                        : 'border-border/60 bg-background/60 hover:bg-accent/70'
+                    }`}
+                    type="button"
+                    onClick={() => onSelectBookmark(bookmark.path)}
+                    disabled={isPending}
+                  >
+                    <div className="truncate text-xs font-medium">{bookmark.label}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{bookmark.path}</div>
+                  </button>
+                );
+              })
+              : null}
+          </div>
         ) : null}
-        {isBookmarkSectionOpen && !isLoadingBookmarks && bookmarks.length === 0 ? (
-          <div className="chat-list-empty">No bookmarks</div>
+      </div>
+
+      <div className="rounded-xl border border-border/60 bg-card/80 p-3">
+        <div className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Path</div>
+        <Input value={currentPath || '/'} disabled />
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-xs">
+          <button className="rounded px-1.5 py-0.5 hover:bg-accent/70" type="button" onClick={() => onOpenDirectory('')}>
+            root
+          </button>
+          {segments.map((segment, index) => {
+            const segmentPath = segments.slice(0, index + 1).join('/');
+            return (
+              <span key={segmentPath} className="inline-flex items-center gap-1">
+                <span className="text-muted-foreground">/</span>
+                <button
+                  className="rounded px-1.5 py-0.5 hover:bg-accent/70"
+                  type="button"
+                  onClick={() => onOpenDirectory(segmentPath)}
+                >
+                  {segment}
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="min-h-0 overflow-hidden rounded-xl border border-border/60 bg-card/70 p-2">
+        <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Files</div>
+        <Separator className="mb-2" />
+
+        {isLoading ? <div className="px-2 py-1 text-xs text-muted-foreground">Loading tree...</div> : null}
+        {!isLoading && errorMessage ? <div className="px-2 py-1 text-xs text-red-300">{errorMessage}</div> : null}
+        {!isLoading && !errorMessage && nodes.length === 0 ? (
+          <div className="px-2 py-1 text-xs text-muted-foreground">No files</div>
         ) : null}
-        {isBookmarkSectionOpen && !isLoadingBookmarks && bookmarks.length > 0 ? (
-          <div className="editor-bookmark-list">
-            {bookmarks.map((bookmark) => {
-              const isSelected = bookmark.path === selectedFilePath;
-              const isPending = bookmark.path === bookmarkPendingPath;
+
+        {!isLoading && !errorMessage ? (
+          <div className="grid max-h-full gap-1 overflow-y-auto">
+            {currentPath ? (
+              <button
+                className="rounded-md border border-border/60 bg-background/60 px-2 py-1 text-left text-xs hover:bg-accent/70"
+                type="button"
+                onClick={() => {
+                  const parentSegments = currentPath.split('/').filter((segment) => segment.length > 0);
+                  parentSegments.pop();
+                  onOpenDirectory(parentSegments.join('/'));
+                }}
+              >
+                ..
+              </button>
+            ) : null}
+            {nodes.map((node) => {
+              const isSelected = node.kind === 'file' && node.path === selectedFilePath;
               return (
                 <button
-                  key={bookmark.path}
-                  className={`editor-bookmark-item${isSelected ? ' selected' : ''}`}
+                  key={node.path}
+                  className={`rounded-md border px-2 py-1 text-left text-xs transition-colors ${
+                    isSelected
+                      ? 'border-primary/60 bg-primary/15 text-primary'
+                      : 'border-border/60 bg-background/60 hover:bg-accent/70'
+                  }`}
                   type="button"
-                  onClick={() => onSelectBookmark(bookmark.path)}
-                  disabled={isPending}
+                  onClick={() => {
+                    if (node.kind === 'directory') {
+                      onOpenDirectory(node.path);
+                      return;
+                    }
+                    onSelectFile(node.path);
+                  }}
                 >
-                  <span className="editor-bookmark-label">{bookmark.label}</span>
-                  <span className="editor-bookmark-path">{bookmark.path}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                      {node.kind === 'directory' ? 'DIR' : 'FILE'}
+                    </Badge>
+                    <span className="truncate">{node.name}</span>
+                  </div>
                 </button>
               );
             })}
           </div>
         ) : null}
       </div>
-
-      <div className="editor-path-line">
-        <button className="editor-path-button" type="button" onClick={() => onOpenDirectory('')}>
-          root
-        </button>
-        {segments.map((segment, index) => {
-          const segmentPath = segments.slice(0, index + 1).join('/');
-          return (
-            <span key={segmentPath} className="editor-path-segment">
-              <span className="editor-path-separator">/</span>
-              <button
-                className="editor-path-button"
-                type="button"
-                onClick={() => onOpenDirectory(segmentPath)}
-              >
-                {segment}
-              </button>
-            </span>
-          );
-        })}
-      </div>
-
-      {isLoading ? <div className="chat-list-empty">Loading tree...</div> : null}
-      {!isLoading && errorMessage ? <div className="chat-list-empty">{errorMessage}</div> : null}
-      {!isLoading && !errorMessage && nodes.length === 0 ? (
-        <div className="chat-list-empty">No files</div>
-      ) : null}
-
-      {!isLoading && !errorMessage ? (
-        <div className="editor-tree-list">
-          {currentPath ? (
-            <button
-              className="editor-tree-item"
-              type="button"
-              onClick={() => {
-                const parentSegments = currentPath
-                  .split('/')
-                  .filter((segment) => segment.length > 0);
-                parentSegments.pop();
-                onOpenDirectory(parentSegments.join('/'));
-              }}
-            >
-              ..
-            </button>
-          ) : null}
-          {nodes.map((node) => {
-            const isSelected = node.kind === 'file' && node.path === selectedFilePath;
-            return (
-              <button
-                key={node.path}
-                className={`editor-tree-item${isSelected ? ' selected' : ''}`}
-                type="button"
-                onClick={() => {
-                  if (node.kind === 'directory') {
-                    onOpenDirectory(node.path);
-                    return;
-                  }
-                  onSelectFile(node.path);
-                }}
-              >
-                <span className="editor-tree-kind">{node.kind === 'directory' ? 'DIR' : 'FILE'}</span>
-                <span className="editor-tree-name">{node.name}</span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
     </div>
   );
 };

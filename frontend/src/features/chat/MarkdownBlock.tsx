@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { Button } from '../../components/ui/button';
+
 interface MarkdownBlockProps {
   readonly text: string;
 }
@@ -87,7 +89,7 @@ const renderInline = (text: string, keyPrefix: string): ReactNode[] => {
       const key = `${keyPrefix}-${lineIndex}-${tokenIndex}`;
       if (token.type === 'code') {
         rendered.push(
-          <code key={key} className="md-inline-code">
+          <code key={key} className="rounded bg-white/10 px-1 py-0.5 font-mono text-xs text-[#e8e8e8]">
             {token.value}
           </code>,
         );
@@ -99,13 +101,7 @@ const renderInline = (text: string, keyPrefix: string): ReactNode[] => {
       }
       if (token.type === 'link') {
         rendered.push(
-          <a
-            key={key}
-            href={token.href}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="md-link"
-          >
+          <a key={key} href={token.href} target="_blank" rel="noreferrer noopener" className="text-[#d9d9d9] underline">
             {token.label}
           </a>,
         );
@@ -204,24 +200,24 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
       const fence = parseFenceBlock(lines, index);
       const blockKey = `code-${index}`;
       const copyState = copyStateByBlock[blockKey] ?? 'idle';
-      const buttonLabel =
-        copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy';
+      const buttonLabel = copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy';
       blocks.push(
-        <div key={blockKey} className="md-code-block">
-          <div className="md-code-toolbar">
-            <span className="md-code-lang">{fence.lang || 'text'}</span>
-            <button
+        <div key={blockKey} className="rounded-lg border border-white/10 bg-black/25">
+          <div className="flex items-center justify-between border-b border-white/10 px-2 py-1.5">
+            <span className="text-[11px] text-[#b4b4b4]">{fence.lang || 'text'}</span>
+            <Button
               type="button"
-              className="button button-secondary md-code-copy"
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 void handleCopyFence(blockKey, fence.code);
               }}
               aria-label="Copy code block"
             >
               {buttonLabel}
-            </button>
+            </Button>
           </div>
-          <pre className="md-code-content">
+          <pre className="max-h-72 overflow-auto p-2 text-xs text-[#e5e5e5]">
             <code data-lang={fence.lang || undefined}>{fence.code}</code>
           </pre>
         </div>,
@@ -233,9 +229,16 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       const level = heading[1].length;
-      const className = `md-heading md-h${level}`;
+      const classNameByLevel: Record<number, string> = {
+        1: 'text-xl font-semibold',
+        2: 'text-lg font-semibold',
+        3: 'text-base font-semibold',
+        4: 'text-sm font-semibold',
+        5: 'text-sm font-medium',
+        6: 'text-sm font-medium text-muted-foreground',
+      };
       blocks.push(
-        <p key={`h-${index}`} className={className}>
+        <p key={`h-${index}`} className={classNameByLevel[level] ?? 'text-sm font-semibold'}>
           {renderInline(heading[2], `h-${index}`)}
         </p>,
       );
@@ -250,7 +253,7 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
         index += 1;
       }
       blocks.push(
-        <blockquote key={`q-${index}`} className="md-quote">
+        <blockquote key={`q-${index}`} className="border-l-2 border-white/20 pl-3 text-sm text-[#c5c5c5]">
           {renderInline(quoteLines.join('\n'), `q-${index}`)}
         </blockquote>,
       );
@@ -264,7 +267,7 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
         index += 1;
       }
       blocks.push(
-        <ul key={`ul-${index}`} className="md-list">
+        <ul key={`ul-${index}`} className="ml-5 list-disc space-y-1 text-sm">
           {items.map((item, itemIndex) => (
             <li key={`ul-item-${index}-${itemIndex}`}>{renderInline(item, `ul-${index}-${itemIndex}`)}</li>
           ))}
@@ -280,7 +283,7 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
         index += 1;
       }
       blocks.push(
-        <ol key={`ol-${index}`} className="md-list">
+        <ol key={`ol-${index}`} className="ml-5 list-decimal space-y-1 text-sm">
           {items.map((item, itemIndex) => (
             <li key={`ol-item-${index}-${itemIndex}`}>{renderInline(item, `ol-${index}-${itemIndex}`)}</li>
           ))}
@@ -304,11 +307,11 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
     }
 
     blocks.push(
-      <p key={`p-${index}`} className="md-paragraph">
+      <p key={`p-${index}`} className="text-sm leading-relaxed">
         {renderInline(paragraphLines.join('\n'), `p-${index}`)}
       </p>,
     );
   }
 
-  return <div className="markdown-block">{blocks}</div>;
+  return <div className="grid gap-2">{blocks}</div>;
 };
