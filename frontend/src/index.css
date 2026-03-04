@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap');
 @import 'tailwindcss';
+@plugin "@tailwindcss/typography";
 @import 'tw-animate-css';
 
 @theme inline {
@@ -87,4 +88,27 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+}
+
+.sidebar-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a #111111;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar {
+  width: 12px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-track {
+  background: #111111;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border: 2px solid #111111;
+  border-radius: 0;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
 }

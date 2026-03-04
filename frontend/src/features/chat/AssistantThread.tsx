@@ -1,4 +1,4 @@
-import { forwardRef, type ComponentProps } from 'react';
+import { forwardRef, useEffect, useRef, useState, type ComponentProps } from 'react';
 
 import {
   ActionBarPrimitive,
@@ -18,6 +18,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
+  EllipsisIcon,
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
@@ -25,15 +26,29 @@ import {
 
 import { cn } from '@/lib/utils';
 
-import type { ChatMessage } from '../../api/chats';
+import type {
+  ChatApprovalPolicy,
+  ChatLaunchOptions,
+  ChatMessage,
+  ChatModelOption,
+  ChatSandboxMode,
+} from '../../api/chats';
+import { Select } from '../../components/ui/select';
 import { MarkdownBlock } from './MarkdownBlock';
 import { parseCommandExecutionText } from './parseCommandExecutionText';
 
 interface AssistantThreadProps {
   readonly messages: readonly ChatMessage[];
   readonly isRunning: boolean;
+  readonly launchOptions: ChatLaunchOptions | null;
+  readonly modelOptions: readonly ChatModelOption[];
+  readonly approvalPolicyOptions: readonly ChatApprovalPolicy[];
+  readonly sandboxModeOptions: readonly ChatSandboxMode[];
+  readonly isUpdatingLaunchOptions: boolean;
   readonly onSend: (text: string) => void;
   readonly onStop: () => void;
+  readonly onUpdateLaunchOptions: (nextLaunchOptions: ChatLaunchOptions) => void;
+  readonly onOpenFile?: (path: string) => void;
 }
 
 interface IconButtonProps extends Omit<ComponentProps<'button'>, 'type'> {
@@ -61,6 +76,41 @@ const toAssistantStatus = (
     return { type: 'incomplete', reason: 'error' };
   }
   return { type: 'complete', reason: 'stop' };
+};
+
+const resolveDefaultEffort = (model: ChatModelOption): string | null => {
+  if (model.defaultEffort && model.efforts.includes(model.defaultEffort)) {
+    return model.defaultEffort;
+  }
+  return model.efforts[0] ?? null;
+};
+
+const formatApprovalPolicyLabel = (value: ChatApprovalPolicy): string => {
+  switch (value) {
+    case 'untrusted':
+      return 'Untrusted';
+    case 'on-failure':
+      return 'On Failure';
+    case 'on-request':
+      return 'On Request';
+    case 'never':
+      return 'Never';
+    default:
+      return value;
+  }
+};
+
+const formatSandboxModeLabel = (value: ChatSandboxMode): string => {
+  switch (value) {
+    case 'read-only':
+      return 'Read Only';
+    case 'workspace-write':
+      return 'Workspace Write';
+    case 'danger-full-access':
+      return 'Danger Full Access';
+    default:
+      return value;
+  }
 };
 
 const toUserText = (message: AppendMessage): string | null => {
@@ -161,16 +211,33 @@ const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
 );
 IconButton.displayName = 'IconButton';
 
-const AssistantText = ({ text }: { readonly text: string }) => {
-  return <MarkdownBlock text={text} />;
+const messageMarkdownClassName =
+  'prose prose-invert max-w-none text-base prose-p:my-1 prose-pre:my-1.5 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6';
+
+const UserText = ({ text, onOpenFile }: { readonly text: string; readonly onOpenFile?: (path: string) => void }) => {
+  return (
+    <div className={messageMarkdownClassName}>
+      <MarkdownBlock text={text} onOpenFile={onOpenFile} />
+    </div>
+  );
 };
 
-const AssistantReasoning = ({ text }: { readonly text: string }) => {
+const AssistantText = ({ text, onOpenFile }: { readonly text: string; readonly onOpenFile?: (path: string) => void }) => {
   return (
-    <details className="rounded-2xl border border-white/10 bg-white/[0.03] p-2.5">
-      <summary className="cursor-pointer text-xs text-[#b4b4b4]">Reasoning</summary>
-      <div className="mt-2 text-sm text-[#d3d3d3]">
-        <MarkdownBlock text={text} />
+    <div className={messageMarkdownClassName}>
+      <MarkdownBlock text={text} onOpenFile={onOpenFile} />
+    </div>
+  );
+};
+
+const AssistantReasoning = ({ text, onOpenFile }: { readonly text: string; readonly onOpenFile?: (path: string) => void }) => {
+  return (
+    <details className="mt-1 opacity-60">
+      <summary className="cursor-pointer text-[11px] text-[#8f8f8f]">
+        <strong>Reasoning</strong>
+      </summary>
+      <div className={cn('mt-1 text-[#9f9f9f]', messageMarkdownClassName)}>
+        <MarkdownBlock text={text} onOpenFile={onOpenFile} />
       </div>
     </details>
   );
@@ -197,12 +264,16 @@ const BranchPicker = ({ className }: { readonly className?: string }) => {
   );
 };
 
-const UserMessage = () => {
+const UserMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => void }) => {
   return (
     <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl flex-col items-end gap-1">
       <div className="ml-auto flex w-full max-w-[85%] items-start justify-end gap-2">
-        <div className="rounded-3xl bg-white/5 px-5 py-2 text-[#eeeeee]">
-          <MessagePrimitive.Parts />
+        <div className="rounded-3xl bg-white/5 px-4 py-1.5 text-[#eeeeee]">
+          <MessagePrimitive.Parts
+            components={{
+              Text: (props) => <UserText {...props} onOpenFile={onOpenFile} />,
+            }}
+          />
         </div>
 
         <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" autohideFloat="single-branch" className="mt-1">
@@ -236,19 +307,15 @@ const EditComposer = () => {
   );
 };
 
-const AssistantMessage = () => {
+const AssistantMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => void }) => {
   return (
-    <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl gap-3">
-      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-3xl border border-white/15 text-xs text-white shadow">
-        C
-      </div>
-
+    <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl">
       <div className="pt-1">
         <div className="text-[#eeeeee]">
           <MessagePrimitive.Parts
             components={{
-              Text: AssistantText,
-              Reasoning: AssistantReasoning,
+              Text: (props) => <AssistantText {...props} onOpenFile={onOpenFile} />,
+              Reasoning: (props) => <AssistantReasoning {...props} onOpenFile={onOpenFile} />,
             }}
           />
         </div>
@@ -294,9 +361,218 @@ const SystemMessage = () => {
   );
 };
 
-const Composer = () => {
+interface ComposerProps {
+  readonly launchOptions: ChatLaunchOptions | null;
+  readonly modelOptions: readonly ChatModelOption[];
+  readonly approvalPolicyOptions: readonly ChatApprovalPolicy[];
+  readonly sandboxModeOptions: readonly ChatSandboxMode[];
+  readonly isUpdatingLaunchOptions: boolean;
+  readonly onUpdateLaunchOptions: (nextLaunchOptions: ChatLaunchOptions) => void;
+}
+
+const Composer = ({
+  launchOptions,
+  modelOptions,
+  approvalPolicyOptions,
+  sandboxModeOptions,
+  isUpdatingLaunchOptions,
+  onUpdateLaunchOptions,
+}: ComposerProps) => {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+  const canEditLaunchOptions = Boolean(launchOptions) && !isUpdatingLaunchOptions;
+  const selectedModelValue = launchOptions?.model ?? modelOptions[0]?.id ?? '';
+  const selectedModelOption = modelOptions.find((model) => model.id === selectedModelValue) ?? null;
+  const effortOptions = selectedModelOption?.efforts ?? [];
+  const selectedEffort = launchOptions?.effort ?? '';
+  const selectedApprovalPolicy = launchOptions?.approvalPolicy ?? '';
+  const selectedSandboxMode = launchOptions?.sandboxMode ?? '';
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const panel = settingsPanelRef.current;
+      if (!panel) {
+        return;
+      }
+      if (event.target instanceof Node && !panel.contains(event.target)) {
+        setIsSettingsOpen(false);
+      }
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [isSettingsOpen]);
+
+  const handleModelChange = (rawModel: string) => {
+    if (!launchOptions) {
+      return;
+    }
+    const nextModel = rawModel.length > 0 ? rawModel : null;
+    const model = modelOptions.find((entry) => entry.id === nextModel) ?? null;
+    if (!nextModel || !model) {
+      return;
+    }
+
+    const nextEffort =
+      launchOptions.effort && model.efforts.includes(launchOptions.effort)
+        ? launchOptions.effort
+        : resolveDefaultEffort(model);
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      model: nextModel,
+      effort: nextEffort,
+    });
+  };
+
+  const handleEffortChange = (rawEffort: string) => {
+    if (!launchOptions) {
+      return;
+    }
+    const nextEffort = rawEffort.length > 0 ? rawEffort : null;
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      model: selectedModelValue || null,
+      effort: nextEffort,
+    });
+  };
+
+  const handleApprovalPolicyChange = (rawPolicy: string) => {
+    if (!launchOptions) {
+      return;
+    }
+    const nextPolicy = rawPolicy.length > 0 ? (rawPolicy as ChatApprovalPolicy) : null;
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      approvalPolicy: nextPolicy,
+    });
+  };
+
+  const handleSandboxModeChange = (rawMode: string) => {
+    if (!launchOptions) {
+      return;
+    }
+    const nextMode = rawMode.length > 0 ? (rawMode as ChatSandboxMode) : null;
+    if (nextMode === 'danger-full-access') {
+      const accepted = window.confirm('Danger Full Access disables filesystem sandboxing. Continue?');
+      if (!accepted) {
+        return;
+      }
+    }
+    onUpdateLaunchOptions({
+      ...launchOptions,
+      sandboxMode: nextMode,
+    });
+  };
+
   return (
-    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-3xl items-end rounded-3xl bg-white/5 pl-2">
+    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-3xl items-end gap-1 rounded-3xl bg-white/5 pl-2 pr-1">
+      <div className="relative mb-2" ref={settingsPanelRef}>
+        <button
+          type="button"
+          title="Chat settings"
+          disabled={!launchOptions}
+          className="inline-flex size-8 items-center justify-center rounded-full bg-white/[0.08] text-[#d8d8d8] transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={() => {
+            setIsSettingsOpen((prev) => !prev);
+          }}
+        >
+          <EllipsisIcon className="size-4" />
+        </button>
+
+        {isSettingsOpen ? (
+          <div className="absolute bottom-10 left-0 z-30 w-[18rem] rounded-xl border border-white/10 bg-[#1b1b1b] p-3 shadow-2xl shadow-black/45">
+            <div className="grid gap-2.5 text-sm">
+              <label className="grid gap-1">
+                <span className="text-[11px] text-[#999999]">Model</span>
+                <Select
+                  value={selectedModelValue}
+                  disabled={!canEditLaunchOptions || modelOptions.length === 0}
+                  className="h-8 border-white/12 bg-[#252525] text-xs"
+                  onChange={(event) => {
+                    handleModelChange(event.target.value);
+                  }}
+                >
+                  {modelOptions.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.displayName}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-[11px] text-[#999999]">Effort</span>
+                <Select
+                  value={selectedEffort}
+                  disabled={!canEditLaunchOptions || !selectedModelOption}
+                  className="h-8 border-white/12 bg-[#252525] text-xs"
+                  onChange={(event) => {
+                    handleEffortChange(event.target.value);
+                  }}
+                >
+                  <option value="">Model default</option>
+                  {effortOptions.map((effort) => (
+                    <option key={effort} value={effort}>
+                      {effort}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-[11px] text-[#999999]">Approval</span>
+                <Select
+                  value={selectedApprovalPolicy}
+                  disabled={!canEditLaunchOptions || approvalPolicyOptions.length === 0}
+                  className="h-8 border-white/12 bg-[#252525] text-xs"
+                  onChange={(event) => {
+                    handleApprovalPolicyChange(event.target.value);
+                  }}
+                >
+                  <option value="">Default</option>
+                  {approvalPolicyOptions.map((policy) => (
+                    <option key={policy} value={policy}>
+                      {formatApprovalPolicyLabel(policy)}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-[11px] text-[#999999]">Sandbox</span>
+                <Select
+                  value={selectedSandboxMode}
+                  disabled={!canEditLaunchOptions || sandboxModeOptions.length === 0}
+                  className="h-8 border-white/12 bg-[#252525] text-xs"
+                  onChange={(event) => {
+                    handleSandboxModeChange(event.target.value);
+                  }}
+                >
+                  <option value="">Default</option>
+                  {sandboxModeOptions.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {formatSandboxModeLabel(mode)}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+
+              <div className="rounded-md border border-white/10 bg-[#222222] px-2 py-1.5">
+                <div className="text-[10px] text-[#9a9a9a]">CWD</div>
+                <div className="truncate text-xs text-[#d5d5d5]" title={launchOptions?.cwd ?? 'Workspace default'}>
+                  {launchOptions?.cwd ?? 'Workspace default'}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
       <ComposerPrimitive.Input
         placeholder="Message ChatGPT"
         className="h-12 max-h-40 grow resize-none bg-transparent p-3.5 text-sm text-white outline-none placeholder:text-white/50"
@@ -320,7 +596,19 @@ const Composer = () => {
  * 既存送信/停止ロジックへ委譲し、バックエンドとの連携挙動は維持する。
  * @param props 既存チャット状態と送信ハンドラ
  */
-export const AssistantThread = ({ messages, isRunning, onSend, onStop }: AssistantThreadProps) => {
+export const AssistantThread = ({
+  messages,
+  isRunning,
+  launchOptions,
+  modelOptions,
+  approvalPolicyOptions,
+  sandboxModeOptions,
+  isUpdatingLaunchOptions,
+  onSend,
+  onStop,
+  onUpdateLaunchOptions,
+  onOpenFile,
+}: AssistantThreadProps) => {
   const runtime = useExternalStoreRuntime({
     messages,
     isRunning,
@@ -339,8 +627,8 @@ export const AssistantThread = ({ messages, isRunning, onSend, onStop }: Assista
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="dark relative flex h-full min-h-0 flex-col items-stretch bg-[#212121] px-4 text-[#ececec]">
-        <ThreadPrimitive.Viewport className="flex min-h-0 grow flex-col gap-8 overflow-y-auto pb-6 pt-8 md:pt-16">
+      <ThreadPrimitive.Root className="dark relative flex h-full min-h-0 flex-col items-stretch bg-[#212121] text-[#ececec]">
+        <ThreadPrimitive.Viewport className="flex min-h-0 grow flex-col gap-8 overflow-y-auto pt-8 md:pt-16">
           <AuiIf condition={(state) => state.thread.isEmpty}>
             <div className="flex grow flex-col items-center justify-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-3xl border border-white/15 shadow">C</div>
@@ -350,26 +638,35 @@ export const AssistantThread = ({ messages, isRunning, onSend, onStop }: Assista
 
           <ThreadPrimitive.Messages
             components={{
-              UserMessage,
+              UserMessage: () => <UserMessage onOpenFile={onOpenFile} />,
               EditComposer,
-              AssistantMessage,
+              AssistantMessage: () => <AssistantMessage onOpenFile={onOpenFile} />,
               SystemMessage,
             }}
           />
+
+          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-[#212121] px-4 pb-2">
+            <ThreadPrimitive.ScrollToBottom asChild>
+              <button
+                type="button"
+                title="Scroll to bottom"
+                className="absolute -top-10 right-4 inline-flex size-8 items-center justify-center rounded-full border border-white/10 bg-[#2b2b2b] text-[#d3d3d3] transition-colors hover:bg-[#353535]"
+              >
+                <ChevronRightIcon className="size-4 rotate-90" />
+              </button>
+            </ThreadPrimitive.ScrollToBottom>
+
+            <Composer
+              launchOptions={launchOptions}
+              modelOptions={modelOptions}
+              approvalPolicyOptions={approvalPolicyOptions}
+              sandboxModeOptions={sandboxModeOptions}
+              isUpdatingLaunchOptions={isUpdatingLaunchOptions}
+              onUpdateLaunchOptions={onUpdateLaunchOptions}
+            />
+            <p className="p-2 text-center text-[#cdcdcd] text-xs">ChatGPT can make mistakes. Check important info.</p>
+          </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
-
-        <ThreadPrimitive.ScrollToBottom asChild>
-          <button
-            type="button"
-            title="Scroll to bottom"
-            className="absolute right-8 bottom-28 inline-flex size-8 items-center justify-center rounded-full border border-white/10 bg-[#2b2b2b] text-[#d3d3d3] transition-colors hover:bg-[#353535]"
-          >
-            <ChevronRightIcon className="size-4 rotate-90" />
-          </button>
-        </ThreadPrimitive.ScrollToBottom>
-
-        <Composer />
-        <p className="p-2 text-center text-[#cdcdcd] text-xs">ChatGPT can make mistakes. Check important info.</p>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
   );

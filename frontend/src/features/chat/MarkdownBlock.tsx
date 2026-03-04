@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/button';
 
 interface MarkdownBlockProps {
   readonly text: string;
+  readonly onOpenFile?: (path: string) => void;
 }
 
 interface InlineTokenText {
@@ -29,6 +30,155 @@ interface InlineTokenLink {
 
 type InlineToken = InlineTokenText | InlineTokenCode | InlineTokenStrong | InlineTokenLink;
 
+const FILE_PATH_CANDIDATE_PATTERN = /(?:\/|\.\/|\.\.\/)[^\s<>()`'"]+\.[A-Za-z0-9][^\s<>()`'"]*(?:#L\d+(?:C\d+)?)?(?::\d+(?::\d+)?)?/g;
+
+const parseLinkToken = (
+  text: string,
+): { readonly token: InlineTokenLink; readonly length: number } | null => {
+  if (!text.startsWith('[')) {
+    return null;
+  }
+
+  let labelEnd = -1;
+  for (let index = 1; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '\\') {
+      index += 1;
+      continue;
+    }
+    if (char === ']') {
+      labelEnd = index;
+      break;
+    }
+  }
+
+  if (labelEnd < 0 || text[labelEnd + 1] !== '(') {
+    return null;
+  }
+
+  let depth = 1;
+  let hrefEnd = -1;
+  for (let index = labelEnd + 2; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '\\') {
+      index += 1;
+      continue;
+    }
+    if (char === '(') {
+      depth += 1;
+      continue;
+    }
+    if (char === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        hrefEnd = index;
+        break;
+      }
+    }
+  }
+
+  if (hrefEnd < 0) {
+    return null;
+  }
+
+  const label = text.slice(1, labelEnd);
+  const destination = text.slice(labelEnd + 2, hrefEnd).trim();
+  if (!destination) {
+    return null;
+  }
+
+  const href = (() => {
+    if (destination.startsWith('<')) {
+      const closing = destination.indexOf('>');
+      if (closing > 1) {
+        return destination.slice(1, closing);
+      }
+    }
+    return destination.split(/\s+/)[0] ?? destination;
+  })();
+
+  if (!href) {
+    return null;
+  }
+
+  return {
+    token: {
+      type: 'link',
+      label,
+      href,
+    },
+    length: hrefEnd + 1,
+  };
+};
+
+const trimPunctuationSuffix = (value: string): { readonly text: string; readonly suffix: string } => {
+  const trimmed = value.replace(/[.,;!?]+$/, '');
+  return {
+    text: trimmed,
+    suffix: value.slice(trimmed.length),
+  };
+};
+
+const renderTextWithFileLinks = (
+  text: string,
+  keyPrefix: string,
+  onOpenFile?: (path: string) => void,
+): ReactNode[] => {
+  if (!onOpenFile) {
+    return [<span key={`${keyPrefix}-plain`}>{text}</span>];
+  }
+
+  const rendered: ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = 0;
+
+  for (const match of text.matchAll(FILE_PATH_CANDIDATE_PATTERN)) {
+    const fullMatch = match[0];
+    const start = match.index;
+    if (start === undefined || fullMatch.length === 0) {
+      continue;
+    }
+
+    if (start > cursor) {
+      rendered.push(<span key={`${keyPrefix}-text-${matchIndex}`}>{text.slice(cursor, start)}</span>);
+    }
+
+    const { text: filePath, suffix } = trimPunctuationSuffix(fullMatch);
+    if (!filePath) {
+      rendered.push(<span key={`${keyPrefix}-path-${matchIndex}`}>{fullMatch}</span>);
+      cursor = start + fullMatch.length;
+      matchIndex += 1;
+      continue;
+    }
+
+    rendered.push(
+      <a
+        key={`${keyPrefix}-path-${matchIndex}`}
+        href={filePath}
+        className="text-[#d9d9d9] underline"
+        onClick={(event) => {
+          event.preventDefault();
+          onOpenFile(filePath);
+        }}
+      >
+        {filePath}
+      </a>,
+    );
+    if (suffix) {
+      rendered.push(<span key={`${keyPrefix}-suffix-${matchIndex}`}>{suffix}</span>);
+    }
+
+    cursor = start + fullMatch.length;
+    matchIndex += 1;
+  }
+
+  if (cursor < text.length) {
+    rendered.push(<span key={`${keyPrefix}-tail`}>{text.slice(cursor)}</span>);
+  }
+
+  return rendered.length > 0 ? rendered : [<span key={`${keyPrefix}-plain`}>{text}</span>];
+};
+
 const tokenizeInline = (text: string): InlineToken[] => {
   const tokens: InlineToken[] = [];
   let cursor = 0;
@@ -36,14 +186,10 @@ const tokenizeInline = (text: string): InlineToken[] => {
   while (cursor < text.length) {
     const remain = text.slice(cursor);
 
-    const linkMatch = remain.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/);
-    if (linkMatch) {
-      tokens.push({
-        type: 'link',
-        label: linkMatch[1],
-        href: linkMatch[2],
-      });
-      cursor += linkMatch[0].length;
+    const linkToken = parseLinkToken(remain);
+    if (linkToken) {
+      tokens.push(linkToken.token);
+      cursor += linkToken.length;
       continue;
     }
 
@@ -79,7 +225,11 @@ const tokenizeInline = (text: string): InlineToken[] => {
   return tokens;
 };
 
-const renderInline = (text: string, keyPrefix: string): ReactNode[] => {
+const renderInline = (
+  text: string,
+  keyPrefix: string,
+  onOpenFile?: (path: string) => void,
+): ReactNode[] => {
   const lines = text.split('\n');
   const rendered: ReactNode[] = [];
 
@@ -100,6 +250,23 @@ const renderInline = (text: string, keyPrefix: string): ReactNode[] => {
         return;
       }
       if (token.type === 'link') {
+        const isExternalLink = /^https?:\/\//.test(token.href);
+        if (!isExternalLink && onOpenFile) {
+          rendered.push(
+            <a
+              key={key}
+              href={token.href}
+              className="text-[#d9d9d9] underline"
+              onClick={(event) => {
+                event.preventDefault();
+                onOpenFile(token.href);
+              }}
+            >
+              {token.label}
+            </a>,
+          );
+          return;
+        }
         rendered.push(
           <a key={key} href={token.href} target="_blank" rel="noreferrer noopener" className="text-[#d9d9d9] underline">
             {token.label}
@@ -107,7 +274,7 @@ const renderInline = (text: string, keyPrefix: string): ReactNode[] => {
         );
         return;
       }
-      rendered.push(<span key={key}>{token.value}</span>);
+      rendered.push(...renderTextWithFileLinks(token.value, key, onOpenFile));
     });
 
     if (lineIndex < lines.length - 1) {
@@ -157,7 +324,7 @@ type CopyState = 'idle' | 'copied' | 'failed';
  * - 強調 / リンク
  * @param props MarkdownBlock プロパティ
  */
-export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
+export const MarkdownBlock = ({ text, onOpenFile }: MarkdownBlockProps) => {
   const lines = text.split('\n');
   const blocks: ReactNode[] = [];
   const [copyStateByBlock, setCopyStateByBlock] = useState<Record<string, CopyState>>({});
@@ -233,13 +400,13 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
         1: 'text-xl font-semibold',
         2: 'text-lg font-semibold',
         3: 'text-base font-semibold',
-        4: 'text-sm font-semibold',
-        5: 'text-sm font-medium',
-        6: 'text-sm font-medium text-muted-foreground',
+        4: 'text-base font-semibold',
+        5: 'text-base font-medium',
+        6: 'text-base font-medium text-muted-foreground',
       };
       blocks.push(
-        <p key={`h-${index}`} className={classNameByLevel[level] ?? 'text-sm font-semibold'}>
-          {renderInline(heading[2], `h-${index}`)}
+        <p key={`h-${index}`} className={classNameByLevel[level] ?? 'text-base font-semibold'}>
+          {renderInline(heading[2], `h-${index}`, onOpenFile)}
         </p>,
       );
       index += 1;
@@ -253,39 +420,39 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
         index += 1;
       }
       blocks.push(
-        <blockquote key={`q-${index}`} className="border-l-2 border-white/20 pl-3 text-sm text-[#c5c5c5]">
-          {renderInline(quoteLines.join('\n'), `q-${index}`)}
+        <blockquote key={`q-${index}`} className="border-l-2 border-white/20 pl-3 text-base text-[#c5c5c5]">
+          {renderInline(quoteLines.join('\n'), `q-${index}`, onOpenFile)}
         </blockquote>,
       );
       continue;
     }
 
-    if (/^[-*+]\s+/.test(line)) {
+    if (/^\s*[-*+]\s+/.test(line)) {
       const items: string[] = [];
-      while (index < lines.length && /^[-*+]\s+/.test(lines[index])) {
-        items.push(lines[index].replace(/^[-*+]\s+/, ''));
+      while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\s*[-*+]\s+/, ''));
         index += 1;
       }
       blocks.push(
-        <ul key={`ul-${index}`} className="ml-5 list-disc space-y-1 text-sm">
+        <ul key={`ul-${index}`} className="ml-5 list-disc space-y-0.5 text-base marker:text-[#bdbdbd]">
           {items.map((item, itemIndex) => (
-            <li key={`ul-item-${index}-${itemIndex}`}>{renderInline(item, `ul-${index}-${itemIndex}`)}</li>
+            <li key={`ul-item-${index}-${itemIndex}`}>{renderInline(item, `ul-${index}-${itemIndex}`, onOpenFile)}</li>
           ))}
         </ul>,
       );
       continue;
     }
 
-    if (/^\d+\.\s+/.test(line)) {
+    if (/^\s*\d+\.\s+/.test(line)) {
       const items: string[] = [];
-      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
-        items.push(lines[index].replace(/^\d+\.\s+/, ''));
+      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\s*\d+\.\s+/, ''));
         index += 1;
       }
       blocks.push(
-        <ol key={`ol-${index}`} className="ml-5 list-decimal space-y-1 text-sm">
+        <ol key={`ol-${index}`} className="ml-5 list-decimal space-y-0.5 text-base marker:text-[#bdbdbd]">
           {items.map((item, itemIndex) => (
-            <li key={`ol-item-${index}-${itemIndex}`}>{renderInline(item, `ol-${index}-${itemIndex}`)}</li>
+            <li key={`ol-item-${index}-${itemIndex}`}>{renderInline(item, `ol-${index}-${itemIndex}`, onOpenFile)}</li>
           ))}
         </ol>,
       );
@@ -299,19 +466,19 @@ export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
       !lines[index].startsWith('```') &&
       !/^(#{1,6})\s+/.test(lines[index]) &&
       !/^>\s?/.test(lines[index]) &&
-      !/^[-*+]\s+/.test(lines[index]) &&
-      !/^\d+\.\s+/.test(lines[index])
+      !/^\s*[-*+]\s+/.test(lines[index]) &&
+      !/^\s*\d+\.\s+/.test(lines[index])
     ) {
       paragraphLines.push(lines[index]);
       index += 1;
     }
 
     blocks.push(
-      <p key={`p-${index}`} className="text-sm leading-relaxed">
-        {renderInline(paragraphLines.join('\n'), `p-${index}`)}
+      <p key={`p-${index}`} className="text-base leading-relaxed">
+        {renderInline(paragraphLines.join('\n'), `p-${index}`, onOpenFile)}
       </p>,
     );
   }
 
-  return <div className="grid gap-2">{blocks}</div>;
+  return <div className="grid gap-1">{blocks}</div>;
 };

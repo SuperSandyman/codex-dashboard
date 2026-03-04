@@ -7,9 +7,9 @@ import type {
   ChatLaunchOptions,
   ChatMessage,
   ChatModelOption,
+  ChatSandboxMode,
   ChatUserInputRequest,
   RespondChatUserInputRequest,
-  ChatSandboxMode,
 } from '../../api/chats';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -37,42 +37,8 @@ interface ChatPaneProps {
   readonly onRespondApproval: (itemId: string, decision: ChatApprovalDecision) => void;
   readonly onRespondUserInput: (itemId: string, payload: RespondChatUserInputRequest) => void;
   readonly onUpdateLaunchOptions: (nextLaunchOptions: ChatLaunchOptions) => void;
+  readonly onOpenFileFromChat: (path: string) => void;
 }
-
-const resolveDefaultEffort = (model: ChatModelOption | null): string | null => {
-  if (!model) {
-    return null;
-  }
-  return model.defaultEffort ?? model.efforts[0] ?? null;
-};
-
-const formatApprovalPolicy = (value: ChatApprovalPolicy): string => {
-  switch (value) {
-    case 'untrusted':
-      return 'Untrusted';
-    case 'on-failure':
-      return 'On Failure';
-    case 'on-request':
-      return 'On Request';
-    case 'never':
-      return 'Never';
-    default:
-      return value;
-  }
-};
-
-const formatSandboxMode = (value: ChatSandboxMode): string => {
-  switch (value) {
-    case 'read-only':
-      return 'Read Only';
-    case 'workspace-write':
-      return 'Workspace Write';
-    case 'danger-full-access':
-      return 'Danger Full Access';
-    default:
-      return value;
-  }
-};
 
 const formatApprovalKind = (kind: ChatApprovalRequest['kind']): string => {
   return kind === 'commandExecution' ? 'Command Execution' : 'File Change';
@@ -108,105 +74,36 @@ const toUserInputResponsePayload = (
 };
 
 /**
- * ChatGPT風テーマでチャット表示し、launch options と承認系入力を同一画面に維持する。
+ * ChatGPT風テーマでチャット表示し、承認系入力のみ下部に表示する。
  * @param props ChatPane プロパティ
  */
-export const ChatPane = ({
-  chatId,
-  messages,
-  activeTurnId,
-  isLoading,
-  isSending,
-  launchOptions,
-  modelOptions,
-  approvalPolicyOptions,
-  sandboxModeOptions,
-  isUpdatingLaunchOptions,
-  approvalRequests,
-  submittingApprovalItemIds,
-  userInputRequests,
-  submittingUserInputItemIds,
-  onSend,
-  onStop,
-  onRespondApproval,
-  onRespondUserInput,
-  onUpdateLaunchOptions,
-}: ChatPaneProps) => {
+export const ChatPane = (props: ChatPaneProps) => {
+  const {
+    chatId,
+    messages,
+    activeTurnId,
+    isLoading,
+    isSending,
+    launchOptions,
+    modelOptions,
+    approvalPolicyOptions,
+    sandboxModeOptions,
+    isUpdatingLaunchOptions,
+    approvalRequests,
+    submittingApprovalItemIds,
+    userInputRequests,
+    submittingUserInputItemIds,
+    onSend,
+    onStop,
+    onRespondApproval,
+    onRespondUserInput,
+    onUpdateLaunchOptions,
+    onOpenFileFromChat,
+  } = props;
   const [userInputDrafts, setUserInputDrafts] = useState<Record<string, Record<string, string>>>({});
-  const [isLaunchPanelOpen, setIsLaunchPanelOpen] = useState(false);
 
   const canSend = Boolean(chatId) && !isLoading && !isSending && !activeTurnId;
   const canStop = Boolean(chatId) && Boolean(activeTurnId);
-  const canEditLaunchOptions = Boolean(chatId) && !isLoading && !isUpdatingLaunchOptions;
-
-  const selectedModel = launchOptions?.model ?? null;
-  const selectedEffort = launchOptions?.effort ?? null;
-  const selectedApprovalPolicy = launchOptions?.approvalPolicy ?? null;
-  const selectedSandboxMode = launchOptions?.sandboxMode ?? null;
-  const selectedModelValue = selectedModel ?? modelOptions[0]?.id ?? '';
-  const selectedModelOption = modelOptions.find((model) => model.id === selectedModelValue) ?? null;
-  const effortOptions = selectedModelOption?.efforts ?? [];
-
-  const handleModelChange = (rawModel: string) => {
-    if (!launchOptions) {
-      return;
-    }
-    const nextModel = rawModel.length > 0 ? rawModel : null;
-    const model = modelOptions.find((entry) => entry.id === nextModel) ?? null;
-    if (!nextModel || !model) {
-      return;
-    }
-
-    const nextEffort = selectedEffort && model.efforts.includes(selectedEffort)
-      ? selectedEffort
-      : resolveDefaultEffort(model);
-
-    onUpdateLaunchOptions({
-      ...launchOptions,
-      model: nextModel,
-      effort: nextEffort,
-    });
-  };
-
-  const handleEffortChange = (rawEffort: string) => {
-    if (!launchOptions) {
-      return;
-    }
-    const nextEffort = rawEffort.length > 0 ? rawEffort : null;
-    onUpdateLaunchOptions({
-      ...launchOptions,
-      model: selectedModelValue || null,
-      effort: nextEffort,
-    });
-  };
-
-  const handleApprovalPolicyChange = (rawPolicy: string) => {
-    if (!launchOptions) {
-      return;
-    }
-    const nextPolicy = rawPolicy.length > 0 ? (rawPolicy as ChatApprovalPolicy) : null;
-    onUpdateLaunchOptions({
-      ...launchOptions,
-      approvalPolicy: nextPolicy,
-    });
-  };
-
-  const handleSandboxModeChange = (rawMode: string) => {
-    if (!launchOptions) {
-      return;
-    }
-    const nextMode = rawMode.length > 0 ? (rawMode as ChatSandboxMode) : null;
-    if (nextMode === 'danger-full-access') {
-      const accepted = window.confirm('Danger Full Access disables filesystem sandboxing. Continue?');
-      if (!accepted) {
-        return;
-      }
-    }
-    onUpdateLaunchOptions({
-      ...launchOptions,
-      sandboxMode: nextMode,
-    });
-  };
 
   const handleUserInputChange = (itemId: string, questionId: string, value: string) => {
     setUserInputDrafts((prev) => {
@@ -223,112 +120,19 @@ export const ChatPane = ({
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-2xl bg-[#212121] text-[#ececec]">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
-        <div className="flex items-center gap-2 text-xs">
-          <Badge className="border border-white/15 bg-white/10 text-[#cdcdcd]" variant="outline">
-            {activeTurnId ? 'Streaming' : 'Idle'}
-          </Badge>
-          <Badge className="border border-white/15 bg-white/[0.03] text-[#b4b4b4]" variant="outline">
-            {isLoading ? 'Loading' : 'Ready'}
-          </Badge>
-          {selectedModel ? (
-            <Badge className="border border-white/15 bg-white/[0.03] text-[#b4b4b4]" variant="outline">
-              {selectedModel}
-            </Badge>
-          ) : null}
-        </div>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="border border-white/10 bg-white/[0.03] text-[#d8d8d8] hover:bg-white/10 hover:text-white"
-          disabled={!chatId || isUpdatingLaunchOptions}
-          onClick={() => setIsLaunchPanelOpen((prev) => !prev)}
-        >
-          {isLaunchPanelOpen ? 'Hide Settings' : 'Session Settings'}
-        </Button>
-      </div>
-
-      {isLaunchPanelOpen ? (
-        <div className="mx-4 mt-3 grid gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="grid gap-1 text-xs text-[#b4b4b4]">
-            <span>Model</span>
-            <Select
-              value={selectedModelValue}
-              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
-              disabled={!canEditLaunchOptions}
-              onChange={(event) => handleModelChange(event.target.value)}
-            >
-              {modelOptions.length === 0 ? <option value="">No models available</option> : null}
-              {modelOptions.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                </option>
-              ))}
-            </Select>
-          </label>
-
-          <label className="grid gap-1 text-xs text-[#b4b4b4]">
-            <span>Effort</span>
-            <Select
-              value={selectedEffort ?? ''}
-              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
-              disabled={!canEditLaunchOptions || !selectedModelOption}
-              onChange={(event) => handleEffortChange(event.target.value)}
-            >
-              <option value="">Model default</option>
-              {effortOptions.map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </Select>
-          </label>
-
-          <label className="grid gap-1 text-xs text-[#b4b4b4]">
-            <span>Approval</span>
-            <Select
-              value={selectedApprovalPolicy ?? ''}
-              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
-              disabled={!canEditLaunchOptions || approvalPolicyOptions.length === 0}
-              onChange={(event) => handleApprovalPolicyChange(event.target.value)}
-            >
-              <option value="">Config default</option>
-              {approvalPolicyOptions.map((policy) => (
-                <option key={policy} value={policy}>
-                  {formatApprovalPolicy(policy)}
-                </option>
-              ))}
-            </Select>
-          </label>
-
-          <label className="grid gap-1 text-xs text-[#b4b4b4]">
-            <span>Sandbox</span>
-            <Select
-              value={selectedSandboxMode ?? ''}
-              className="border-white/15 bg-[#2a2a2a] text-[#ececec]"
-              disabled={!canEditLaunchOptions || sandboxModeOptions.length === 0}
-              onChange={(event) => handleSandboxModeChange(event.target.value)}
-            >
-              <option value="">Config default</option>
-              {sandboxModeOptions.map((mode) => (
-                <option key={mode} value={mode}>
-                  {formatSandboxMode(mode)}
-                </option>
-              ))}
-            </Select>
-          </label>
-        </div>
-      ) : null}
-
-      <div className="min-h-0 flex-1 pt-2">
+      <div className="min-h-0 flex-1">
         {!chatId ? (
           <div className="grid h-full place-items-center p-6 text-sm text-[#b4b4b4]">Select or create a chat to start.</div>
         ) : (
           <AssistantThread
             messages={messages}
             isRunning={Boolean(activeTurnId)}
+            launchOptions={launchOptions}
+            modelOptions={modelOptions}
+            approvalPolicyOptions={approvalPolicyOptions}
+            sandboxModeOptions={sandboxModeOptions}
+            isUpdatingLaunchOptions={isUpdatingLaunchOptions}
+            onOpenFile={onOpenFileFromChat}
             onSend={(text) => {
               if (!canSend) {
                 return;
@@ -341,6 +145,7 @@ export const ChatPane = ({
               }
               onStop();
             }}
+            onUpdateLaunchOptions={onUpdateLaunchOptions}
           />
         )}
       </div>

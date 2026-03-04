@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 import {
-  EllipsisIcon,
   FilePenLineIcon,
-  FolderIcon,
-  FolderPlusIcon,
   MessageSquareIcon,
   TerminalSquareIcon,
-  UsersIcon,
 } from 'lucide-react';
 
 import {
@@ -111,29 +107,6 @@ const EMPTY_TERMINAL_CATALOG: TerminalCatalog = {
   cwdChoices: [],
   profiles: [],
 };
-
-interface SidebarGroupChatItem {
-  readonly id: string;
-  readonly label: string;
-  readonly avatar: string;
-}
-
-interface SidebarProjectItem {
-  readonly id: string;
-  readonly label: string;
-}
-
-const SIDEBAR_GROUP_CHATS: readonly SidebarGroupChatItem[] = [
-  { id: 'group-dev-team', label: '開発チーム', avatar: 'D' },
-  { id: 'group-design', label: 'デザイン', avatar: 'U' },
-  { id: 'group-ops', label: '運用', avatar: 'O' },
-];
-
-const SIDEBAR_PROJECTS: readonly SidebarProjectItem[] = [
-  { id: 'project-codex-dashboard', label: 'codex-dashboard' },
-  { id: 'project-app-server', label: 'app-server' },
-  { id: 'project-ui-lab', label: 'ui-lab' },
-];
 
 const buildChatWsUrl = (threadId: string): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -320,6 +293,70 @@ const toChatSidebarLabel = (preview: string): string => {
   return `${normalized.slice(0, 28)}…`;
 };
 
+const stripLineInfoFromPath = (value: string): string => {
+  return value.replace(/#L\d+(C\d+)?$/, '').replace(/:\d+(?::\d+)?$/, '');
+};
+
+const decodePathComponent = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const normalizePathFromChatLink = (rawPath: string): string => {
+  const trimmed = rawPath.trim().replace(/^<|>$/g, '').replace(/^['"`]|['"`]$/g, '');
+  if (!trimmed) {
+    return '';
+  }
+
+  const withoutFileScheme = trimmed.replace(/^file:\/\//, '');
+  const resolvedUrlPath = (() => {
+    try {
+      const url = new URL(withoutFileScheme);
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        return `${url.pathname}${url.hash}`;
+      }
+    } catch {
+      return withoutFileScheme;
+    }
+    return withoutFileScheme;
+  })();
+
+  const decoded = decodePathComponent(resolvedUrlPath);
+  const withoutQuery = decoded.split('?')[0] ?? decoded;
+  const withoutHash = withoutQuery.split('#')[0] ?? withoutQuery;
+  const stripped = stripLineInfoFromPath(withoutHash);
+  return stripped.replace(/\\/g, '/').replace(/^\.\/+/, '');
+};
+
+const toWorkspaceRelativePathFromAbsolute = (
+  workspaceRoot: string,
+  absolutePath: string,
+): string | null => {
+  const directRelativePath = toRelativeWorkspacePath(workspaceRoot, absolutePath);
+  if (directRelativePath !== null) {
+    return directRelativePath;
+  }
+
+  const workspaceRepoRoot = workspaceRoot.replace(/\/worktrees\/[^/]+$/, '');
+  const relativeFromRepoRoot = toRelativeWorkspacePath(workspaceRepoRoot, absolutePath);
+  if (relativeFromRepoRoot === null) {
+    return null;
+  }
+
+  const adjustedRelativePath = relativeFromRepoRoot.replace(/^worktrees\/[^/]+\//, '');
+  if (
+    adjustedRelativePath === '..' ||
+    adjustedRelativePath.startsWith('../') ||
+    adjustedRelativePath.includes('/../')
+  ) {
+    return null;
+  }
+  return adjustedRelativePath;
+};
+
 /**
  * Chat と Operations Terminal を切り替えて利用するダッシュボード。
  */
@@ -361,8 +398,6 @@ const App = () => {
   const [isLoadingEditorFile, setIsLoadingEditorFile] = useState(false);
   const [isLoadingEditorBookmarks, setIsLoadingEditorBookmarks] = useState(false);
   const [isSavingEditorFile, setIsSavingEditorFile] = useState(false);
-  const [selectedGroupChatId, setSelectedGroupChatId] = useState<string | null>(SIDEBAR_GROUP_CHATS[0]?.id ?? null);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(SIDEBAR_PROJECTS[0]?.id ?? null);
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -1069,6 +1104,29 @@ const App = () => {
     setActiveTurnId(sendResult.data.turnId);
   };
 
+  const handleCreateBlankChat = async () => {
+    setIsLoadingChats(true);
+    const result = await createChat(newChatLaunchOptions);
+    setIsLoadingChats(false);
+    if (!result.ok || !result.data) {
+      showToast(result.error?.message ?? 'Failed to create chat');
+      return;
+    }
+
+    const chat = result.data.chat;
+    setChats((prev) => sortChatsByUpdatedAt([chat, ...prev]));
+    setSelectedChatId(chat.id);
+    setMessages([]);
+    setActiveTurnId(null);
+    setApprovalRequests([]);
+    setSubmittingApprovalItemIds([]);
+    setUserInputRequests([]);
+    setSubmittingUserInputItemIds([]);
+    switchView('chat');
+    setIsMenuOpen(false);
+    setIsCreatePanelOpen(false);
+  };
+
   const handleCreateTerminal = async () => {
     setIsCreatingTerminal(true);
     const result = await createTerminal({
@@ -1371,6 +1429,38 @@ const App = () => {
     }
     setActiveView(nextView);
   };
+
+  const handleOpenFileFromChat = useCallback(
+    (rawPath: string) => {
+      let targetPath = normalizePathFromChatLink(rawPath);
+
+      if (targetPath.length === 0) {
+        return;
+      }
+
+      if (targetPath.startsWith('/')) {
+        if (!editorWorkspaceRoot) {
+          showToast('WORKSPACE_ROOT is not configured.');
+          return;
+        }
+        const relative = toWorkspaceRelativePathFromAbsolute(editorWorkspaceRoot, targetPath);
+        if (relative === null) {
+          showToast('Selected file is outside WORKSPACE_ROOT.');
+          return;
+        }
+        targetPath = relative;
+      }
+
+      if (!confirmDiscardEditorChanges()) {
+        return;
+      }
+
+      setActiveView('editor');
+      void loadEditorFile(targetPath);
+      setIsMenuOpen(false);
+    },
+    [confirmDiscardEditorChanges, editorWorkspaceRoot, loadEditorFile, showToast],
+  );
 
   const switchViewBySwipe = (direction: SwipeDirection) => {
     if (!window.matchMedia(MOBILE_BREAKPOINT_MEDIA_QUERY).matches) {
@@ -1814,21 +1904,18 @@ const App = () => {
 
         <aside
           className={cn(
-            'fixed inset-y-0 left-0 z-30 w-[17rem] max-w-[90vw] overflow-y-auto bg-[#181818] p-3 shadow-xl transition-transform md:static md:z-auto md:w-72 md:max-w-none md:translate-x-0 md:bg-transparent md:p-0 md:shadow-none',
+            'sidebar-scrollbar fixed inset-y-0 left-0 z-30 w-[17rem] max-w-[90vw] overflow-y-auto bg-[#181818] p-3 shadow-xl transition-transform duration-300 ease-in-out md:static md:z-auto md:w-72 md:max-w-none md:translate-x-0 md:bg-transparent md:p-0 md:shadow-none',
             isMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
           )}
         >
           <Card className="h-full min-h-0 rounded-none border-white/10 bg-[#181818]">
-            <CardContent className="flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2">
+            <CardContent className="sidebar-scrollbar flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2">
               <div className="grid gap-1">
                 <button
                   type="button"
                   className={toSidebarRowClassName(false)}
                   onClick={() => {
-                    setCreateMode('chat');
-                    setIsCreatePanelOpen(true);
-                    switchView('chat');
-                    setIsMenuOpen(false);
+                    void handleCreateBlankChat();
                   }}
                 >
                   <MessageSquareIcon className="size-4" />
@@ -1858,62 +1945,7 @@ const App = () => {
                   <span>エディタ</span>
                 </button>
               </div>
-
-              <div className="grid gap-1">
-                <button
-                  type="button"
-                  className={toSidebarRowClassName(false)}
-                  onClick={() => {
-                    setIsMenuOpen(false);
-                    showToast('プロジェクト作成UIは準備中です');
-                  }}
-                >
-                  <FolderPlusIcon className="size-4" />
-                  <span>プロジェクトを新規作成</span>
-                </button>
-                {SIDEBAR_PROJECTS.map((project) => (
-                  <button
-                    key={project.id}
-                    type="button"
-                    className={toSidebarRowClassName(selectedProjectId === project.id)}
-                    onClick={() => {
-                      setSelectedProjectId(project.id);
-                      setIsMenuOpen(false);
-                    }}
-                  >
-                    <FolderIcon className="size-4" />
-                    <span className="truncate">{project.label}</span>
-                  </button>
-                ))}
-                <button type="button" className={toSidebarRowClassName(false)}>
-                  <EllipsisIcon className="size-4" />
-                  <span>… 詳細</span>
-                </button>
-              </div>
-
               <div className="h-px bg-white/10" />
-
-              <div className="grid gap-1.5">
-                <p className="px-1 text-[11px] text-[#8d8d8d]">グループチャット</p>
-                {SIDEBAR_GROUP_CHATS.map((group) => (
-                  <button
-                    key={group.id}
-                    type="button"
-                    className={toSidebarRowClassName(selectedGroupChatId === group.id)}
-                    onClick={() => {
-                      setSelectedGroupChatId(group.id);
-                      switchView('chat');
-                      setIsMenuOpen(false);
-                    }}
-                  >
-                    <UsersIcon className="size-4" />
-                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
-                    <span className="inline-flex size-5 items-center justify-center rounded-full bg-white/12 text-[10px] text-[#dfdfdf]">
-                      {group.avatar}
-                    </span>
-                  </button>
-                ))}
-              </div>
 
               <div className="grid gap-1.5 pb-2">
                 <p className="px-1 text-[11px] text-[#8d8d8d]">あなたのチャット</p>
@@ -1973,7 +2005,7 @@ const App = () => {
         </aside>
 
         <section
-          className="min-h-0 flex-1"
+          className="min-h-0 flex-1 transition-all duration-300 ease-out"
           onTouchStart={handleMobileSwitcherTouchStart}
           onTouchEnd={handleMobileSwitcherTouchEnd}
         >
@@ -1999,6 +2031,7 @@ const App = () => {
               onRespondApproval={handleRespondApproval}
               onRespondUserInput={handleRespondUserInput}
               onUpdateLaunchOptions={handleUpdateSelectedLaunchOptions}
+              onOpenFileFromChat={handleOpenFileFromChat}
             />
           ) : null}
 
