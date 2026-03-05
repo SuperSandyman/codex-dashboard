@@ -3,6 +3,7 @@ import {
   FilePenLineIcon,
   MessageSquareIcon,
   TerminalSquareIcon,
+  XIcon,
 } from 'lucide-react';
 
 import {
@@ -40,7 +41,6 @@ import {
   getEditorFile,
   getEditorTree,
   saveEditorFile,
-  type EditorTreeNode,
 } from './api/editor';
 import { ChatPane } from './features/chat/ChatPane';
 import {
@@ -51,9 +51,8 @@ import {
 } from './features/chat/messageStore';
 import { parseChatStreamEvent, type ChatStreamEvent } from './features/chat/protocol';
 import { EditorPane } from './features/editor/EditorPane';
-import { FileTree } from './features/editor/FileTree';
+import { FileTree, type EditorDirectoryLoadResult } from './features/editor/FileTree';
 import {
-  clearMissingEditorBookmarks,
   listEditorBookmarks,
   removeEditorBookmark,
   upsertEditorBookmark,
@@ -87,6 +86,13 @@ interface SessionDirectoryCache {
 type AppView = 'chat' | 'terminal' | 'editor';
 type CreateMode = 'chat' | 'terminal';
 type SwipeDirection = 'left' | 'right';
+type WorkbenchTabKind = 'terminal' | 'editor';
+
+interface WorkbenchTab {
+  readonly id: string;
+  readonly kind: WorkbenchTabKind;
+  readonly resourceId: string;
+}
 
 const VIEW_ORDER: readonly AppView[] = ['chat', 'terminal', 'editor'];
 const MOBILE_BREAKPOINT_MEDIA_QUERY = '(max-width: 720px)';
@@ -106,6 +112,32 @@ const EMPTY_TERMINAL_CATALOG: TerminalCatalog = {
   workspaceRoot: null,
   cwdChoices: [],
   profiles: [],
+};
+
+const toWorkbenchTabId = (kind: WorkbenchTabKind, resourceId: string): string => {
+  return `${kind}:${resourceId}`;
+};
+
+const toFileTabLabel = (path: string): string => {
+  const segments = path.split('/').filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? path;
+};
+
+const toTerminalTabLabel = (terminal: TerminalSummary | null): string => {
+  if (!terminal) {
+    return 'Terminal';
+  }
+  const cwdSegments = terminal.cwd.split('/').filter((segment) => segment.length > 0);
+  const cwdLabel = cwdSegments[cwdSegments.length - 1] ?? terminal.cwd;
+  return `${cwdLabel} (${terminal.id.slice(0, 6)})`;
+};
+
+const toChatSidebarLabel = (preview: string): string => {
+  const normalized = preview.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 28) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 28)}…`;
 };
 
 const buildChatWsUrl = (threadId: string): string => {
@@ -285,14 +317,6 @@ const sortBookmarksByUpdatedAt = (
   return [...bookmarks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 };
 
-const toChatSidebarLabel = (preview: string): string => {
-  const normalized = preview.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= 28) {
-    return normalized;
-  }
-  return `${normalized.slice(0, 28)}…`;
-};
-
 const stripLineInfoFromPath = (value: string): string => {
   return value.replace(/#L\d+(C\d+)?$/, '').replace(/:\d+(?::\d+)?$/, '');
 };
@@ -370,13 +394,11 @@ const App = () => {
 
   const [terminals, setTerminals] = useState<TerminalSummary[]>([]);
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
+  const [workbenchTabs, setWorkbenchTabs] = useState<WorkbenchTab[]>([]);
+  const [activeWorkbenchTabId, setActiveWorkbenchTabId] = useState<string | null>(null);
   const [editorWorkspaceRoot, setEditorWorkspaceRoot] = useState<string | null>(null);
-  const [editorTreePath, setEditorTreePath] = useState('');
-  const [editorTreeNodes, setEditorTreeNodes] = useState<EditorTreeNode[]>([]);
-  const [hasInitializedEditorTree, setHasInitializedEditorTree] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [editorBookmarks, setEditorBookmarks] = useState<EditorFileBookmark[]>([]);
-  const [bookmarkPendingPath, setBookmarkPendingPath] = useState<string | null>(null);
   const [editorContent, setEditorContent] = useState('');
   const [editorVersion, setEditorVersion] = useState<string | null>(null);
   const [editorUpdatedAt, setEditorUpdatedAt] = useState<string | null>(null);
@@ -393,10 +415,7 @@ const App = () => {
   const [isLoadingTerminals, setIsLoadingTerminals] = useState(false);
   const [isLoadingTerminalCatalog, setIsLoadingTerminalCatalog] = useState(false);
   const [isCreatingTerminal, setIsCreatingTerminal] = useState(false);
-  const [isLoadingEditorCatalog, setIsLoadingEditorCatalog] = useState(false);
-  const [isLoadingEditorTree, setIsLoadingEditorTree] = useState(false);
   const [isLoadingEditorFile, setIsLoadingEditorFile] = useState(false);
-  const [isLoadingEditorBookmarks, setIsLoadingEditorBookmarks] = useState(false);
   const [isSavingEditorFile, setIsSavingEditorFile] = useState(false);
 
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -433,9 +452,29 @@ const App = () => {
     return chats.find((chat) => chat.id === selectedChatId) ?? null;
   }, [chats, selectedChatId]);
 
-  const selectedTerminal = useMemo(() => {
-    return terminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
-  }, [terminals, selectedTerminalId]);
+  const activeWorkbenchTab = useMemo(() => {
+    if (!activeWorkbenchTabId) {
+      return null;
+    }
+    return workbenchTabs.find((tab) => tab.id === activeWorkbenchTabId) ?? null;
+  }, [activeWorkbenchTabId, workbenchTabs]);
+
+  const activeWorkbenchTerminal = useMemo(() => {
+    if (!activeWorkbenchTab || activeWorkbenchTab.kind !== 'terminal') {
+      return null;
+    }
+    return terminals.find((terminal) => terminal.id === activeWorkbenchTab.resourceId) ?? null;
+  }, [activeWorkbenchTab, terminals]);
+
+  const activeWorkbenchKind: WorkbenchTabKind | null = useMemo(() => {
+    if (activeWorkbenchTab) {
+      return activeWorkbenchTab.kind;
+    }
+    if (activeView === 'chat') {
+      return null;
+    }
+    return activeView;
+  }, [activeView, activeWorkbenchTab]);
 
   const newChatEfforts = useMemo(() => {
     const model = modelOptions.find((entry) => entry.id === newChatLaunchOptions.model) ?? null;
@@ -582,9 +621,7 @@ const App = () => {
   }, [showToast]);
 
   const refreshEditorCatalog = useCallback(async () => {
-    setIsLoadingEditorCatalog(true);
     const result = await getEditorCatalog();
-    setIsLoadingEditorCatalog(false);
     if (!result.ok || !result.data) {
       showToast(result.error?.message ?? 'Failed to load editor catalog');
       return;
@@ -723,25 +760,6 @@ const App = () => {
     [cwdChoices, showToast, terminalCatalog.cwdChoices, terminalCatalog.workspaceRoot, workspaceRoot],
   );
 
-  const loadEditorTree = useCallback(
-    async (targetPath: string) => {
-      setIsLoadingEditorTree(true);
-      setEditorLoadError(null);
-      const result = await getEditorTree(targetPath);
-      setIsLoadingEditorTree(false);
-      if (!result.ok || !result.data) {
-        const message = result.error?.message ?? 'Failed to load file tree';
-        setEditorLoadError(message);
-        showToast(message);
-        return;
-      }
-      setEditorTreePath(result.data.path);
-      setEditorTreeNodes(result.data.nodes);
-      setHasInitializedEditorTree(true);
-    },
-    [showToast],
-  );
-
   const loadEditorFile = useCallback(
     async (targetPath: string, options?: { readonly suppressToast?: boolean }) => {
       setIsLoadingEditorFile(true);
@@ -771,6 +789,25 @@ const App = () => {
       return { ok: true as const };
     },
     [showToast],
+  );
+
+  const loadEditorDirectory = useCallback(
+    async (targetPath: string): Promise<EditorDirectoryLoadResult> => {
+      const result = await getEditorTree(targetPath);
+      if (!result.ok || !result.data) {
+        return {
+          ok: false,
+          nodes: [],
+          message: result.error?.message ?? 'Failed to load file tree',
+        };
+      }
+      return {
+        ok: true,
+        nodes: result.data.nodes,
+        message: null,
+      };
+    },
+    [],
   );
 
   const loadChatDetail = useCallback(
@@ -1018,21 +1055,12 @@ const App = () => {
   }, [handleChatStreamEvent, selectedChatId, showToast]);
 
   useEffect(() => {
-    if (activeView !== 'editor' || editorWorkspaceRoot === null || hasInitializedEditorTree) {
-      return;
-    }
-    void loadEditorTree('');
-  }, [activeView, editorWorkspaceRoot, hasInitializedEditorTree, loadEditorTree]);
-
-  useEffect(() => {
     if (!editorWorkspaceRoot) {
       setEditorBookmarks([]);
-      setIsLoadingEditorBookmarks(false);
       return;
     }
 
     let isCancelled = false;
-    setIsLoadingEditorBookmarks(true);
     void (async () => {
       try {
         const bookmarks = await listEditorBookmarks(editorWorkspaceRoot);
@@ -1047,10 +1075,6 @@ const App = () => {
         const message = error instanceof Error ? error.message : 'Failed to load bookmarks';
         showToast(`Bookmarks are unavailable: ${message}`);
         setEditorBookmarks([]);
-      } finally {
-        if (!isCancelled) {
-          setIsLoadingEditorBookmarks(false);
-        }
       }
     })();
 
@@ -1072,6 +1096,181 @@ const App = () => {
       window.removeEventListener('beforeunload', onBeforeUnload);
     };
   }, [isEditorDirty]);
+
+  const confirmDiscardEditorChanges = useCallback((): boolean => {
+    if (!isEditorDirty) {
+      return true;
+    }
+    return window.confirm('You have unsaved changes. Discard them?');
+  }, [isEditorDirty]);
+
+  const openTerminalTab = useCallback((terminalId: string) => {
+    const tabId = toWorkbenchTabId('terminal', terminalId);
+    setWorkbenchTabs((prev) => {
+      if (prev.some((tab) => tab.id === tabId)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: tabId,
+          kind: 'terminal',
+          resourceId: terminalId,
+        },
+      ];
+    });
+    setActiveWorkbenchTabId(tabId);
+    setSelectedTerminalId(terminalId);
+    setActiveView('terminal');
+  }, []);
+
+  const openEditorTab = useCallback(
+    async (targetPath: string, options?: { readonly suppressToast?: boolean }): Promise<boolean> => {
+      if (selectedFilePath && selectedFilePath !== targetPath && !confirmDiscardEditorChanges()) {
+        return false;
+      }
+
+      const tabId = toWorkbenchTabId('editor', targetPath);
+      setWorkbenchTabs((prev) => {
+        if (prev.some((tab) => tab.id === tabId)) {
+          return prev;
+        }
+        return [
+          ...prev,
+          {
+            id: tabId,
+            kind: 'editor',
+            resourceId: targetPath,
+          },
+        ];
+      });
+      setActiveWorkbenchTabId(tabId);
+      setActiveView('editor');
+      setSelectedFilePath(targetPath);
+
+      const result = await loadEditorFile(targetPath, options);
+      return result.ok;
+    },
+    [confirmDiscardEditorChanges, loadEditorFile, selectedFilePath],
+  );
+
+  const activateWorkbenchTab = useCallback(
+    (tab: WorkbenchTab) => {
+      if (tab.kind === 'terminal') {
+        openTerminalTab(tab.resourceId);
+        return;
+      }
+      void openEditorTab(tab.resourceId);
+    },
+    [openEditorTab, openTerminalTab],
+  );
+
+  const closeWorkbenchTab = useCallback(
+    (tabId: string) => {
+      const closingTab = workbenchTabs.find((tab) => tab.id === tabId) ?? null;
+      if (!closingTab) {
+        return;
+      }
+
+      const isClosingActiveTab = activeWorkbenchTabId === tabId;
+      if (
+        isClosingActiveTab &&
+        closingTab.kind === 'editor' &&
+        selectedFilePath === closingTab.resourceId &&
+        !confirmDiscardEditorChanges()
+      ) {
+        return;
+      }
+
+      const closingIndex = workbenchTabs.findIndex((tab) => tab.id === tabId);
+      const nextTabs = workbenchTabs.filter((tab) => tab.id !== tabId);
+      setWorkbenchTabs(nextTabs);
+
+      if (closingTab.kind === 'terminal' && selectedTerminalId === closingTab.resourceId) {
+        const nextTerminalTab = nextTabs.find((tab) => tab.kind === 'terminal') ?? null;
+        setSelectedTerminalId(nextTerminalTab?.resourceId ?? null);
+      }
+
+      if (!isClosingActiveTab) {
+        return;
+      }
+
+      if (closingTab.kind === 'editor' && selectedFilePath === closingTab.resourceId) {
+        setSelectedFilePath(null);
+        setEditorContent('');
+        setLastSavedContent('');
+        setEditorVersion(null);
+        setEditorUpdatedAt(null);
+        setEditorLoadError(null);
+        setEditorSaveError(null);
+        setEditorSaveStatus(null);
+      }
+
+      const fallbackTab =
+        nextTabs[closingIndex] ??
+        nextTabs[Math.max(closingIndex - 1, 0)] ??
+        null;
+      if (!fallbackTab) {
+        setActiveWorkbenchTabId(null);
+        return;
+      }
+      activateWorkbenchTab(fallbackTab);
+    },
+    [
+      activeWorkbenchTabId,
+      activateWorkbenchTab,
+      confirmDiscardEditorChanges,
+      selectedFilePath,
+      selectedTerminalId,
+      workbenchTabs,
+    ],
+  );
+
+  const handleFocusEditorWorkbench = useCallback(() => {
+    const activeEditorTab = activeWorkbenchTab?.kind === 'editor' ? activeWorkbenchTab : null;
+    const fallbackEditorTab = [...workbenchTabs].reverse().find((tab) => tab.kind === 'editor') ?? null;
+    const targetPath = activeEditorTab?.resourceId ?? fallbackEditorTab?.resourceId ?? selectedFilePath;
+    if (!targetPath) {
+      setActiveView('editor');
+      return;
+    }
+    void openEditorTab(targetPath);
+  }, [activeWorkbenchTab, openEditorTab, selectedFilePath, workbenchTabs]);
+
+  const openChatCreateDialog = useCallback(() => {
+    setCreateMode('chat');
+    setIsCreatePanelOpen(true);
+    setIsMenuOpen(false);
+  }, []);
+
+  const openTerminalCreateDialog = useCallback(() => {
+    setCreateMode('terminal');
+    setIsCreatePanelOpen(true);
+    setIsMenuOpen(false);
+  }, []);
+
+  useEffect(() => {
+    const availableTerminalIds = new Set(terminals.map((terminal) => terminal.id));
+    setWorkbenchTabs((prev) => {
+      return prev.filter((tab) => tab.kind === 'editor' || availableTerminalIds.has(tab.resourceId));
+    });
+  }, [terminals]);
+
+  useEffect(() => {
+    if (!activeWorkbenchTabId) {
+      return;
+    }
+    const hasActiveTab = workbenchTabs.some((tab) => tab.id === activeWorkbenchTabId);
+    if (hasActiveTab) {
+      return;
+    }
+    const fallbackTab = workbenchTabs[0] ?? null;
+    if (!fallbackTab) {
+      setActiveWorkbenchTabId(null);
+      return;
+    }
+    activateWorkbenchTab(fallbackTab);
+  }, [activeWorkbenchTabId, activateWorkbenchTab, workbenchTabs]);
 
   const handleCreateChat = async () => {
     setIsLoadingChats(true);
@@ -1104,29 +1303,6 @@ const App = () => {
     setActiveTurnId(sendResult.data.turnId);
   };
 
-  const handleCreateBlankChat = async () => {
-    setIsLoadingChats(true);
-    const result = await createChat(newChatLaunchOptions);
-    setIsLoadingChats(false);
-    if (!result.ok || !result.data) {
-      showToast(result.error?.message ?? 'Failed to create chat');
-      return;
-    }
-
-    const chat = result.data.chat;
-    setChats((prev) => sortChatsByUpdatedAt([chat, ...prev]));
-    setSelectedChatId(chat.id);
-    setMessages([]);
-    setActiveTurnId(null);
-    setApprovalRequests([]);
-    setSubmittingApprovalItemIds([]);
-    setUserInputRequests([]);
-    setSubmittingUserInputItemIds([]);
-    switchView('chat');
-    setIsMenuOpen(false);
-    setIsCreatePanelOpen(false);
-  };
-
   const handleCreateTerminal = async () => {
     setIsCreatingTerminal(true);
     const result = await createTerminal({
@@ -1143,8 +1319,7 @@ const App = () => {
 
     const terminal = result.data.terminal;
     setTerminals((prev) => sortTerminalsByUpdatedAt([terminal, ...prev]));
-    setSelectedTerminalId(terminal.id);
-    switchView('terminal');
+    openTerminalTab(terminal.id);
     setIsMenuOpen(false);
     setIsCreatePanelOpen(false);
   };
@@ -1284,24 +1459,15 @@ const App = () => {
       return sortTerminalsByUpdatedAt(next);
     });
     setSelectedTerminalId(nextSelectedTerminalId);
-  };
-
-  const confirmDiscardEditorChanges = useCallback((): boolean => {
-    if (!isEditorDirty) {
-      return true;
+    const terminalTabId = toWorkbenchTabId('terminal', terminalIdToKill);
+    setWorkbenchTabs((prev) => prev.filter((tab) => tab.id !== terminalTabId));
+    if (activeWorkbenchTabId === terminalTabId) {
+      setActiveWorkbenchTabId(null);
     }
-    return window.confirm('You have unsaved changes. Discard them?');
-  }, [isEditorDirty]);
-
-  const handleOpenEditorDirectory = (targetPath: string) => {
-    void loadEditorTree(targetPath);
   };
 
   const handleSelectEditorFile = (targetPath: string) => {
-    if (!confirmDiscardEditorChanges()) {
-      return;
-    }
-    void loadEditorFile(targetPath);
+    void openEditorTab(targetPath);
     setIsMenuOpen(false);
   };
 
@@ -1342,41 +1508,6 @@ const App = () => {
       showToast(`Failed to update bookmark: ${message}`);
     }
   }, [editorBookmarks, editorWorkspaceRoot, selectedFilePath, showToast]);
-
-  const handleSelectEditorBookmark = useCallback(
-    async (targetPath: string) => {
-      if (!confirmDiscardEditorChanges()) {
-        return;
-      }
-      setBookmarkPendingPath(targetPath);
-      const result = await loadEditorFile(targetPath, { suppressToast: true });
-      setBookmarkPendingPath((currentPath) => (currentPath === targetPath ? null : currentPath));
-
-      if (result.ok) {
-        setIsMenuOpen(false);
-        return;
-      }
-
-      const isFileMissing = result.status === 404 || result.errorCode === 'file_not_found';
-      if (!isFileMissing) {
-        showToast(result.message);
-        return;
-      }
-
-      setEditorBookmarks((prev) => prev.filter((bookmark) => bookmark.path !== targetPath));
-      showToast('File no longer exists. Bookmark removed.');
-      if (!editorWorkspaceRoot) {
-        return;
-      }
-      try {
-        await clearMissingEditorBookmarks(editorWorkspaceRoot, [targetPath]);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to remove missing bookmark';
-        showToast(`Failed to sync bookmarks: ${message}`);
-      }
-    },
-    [confirmDiscardEditorChanges, editorWorkspaceRoot, loadEditorFile, showToast],
-  );
 
   const handleSaveEditorFile = async () => {
     if (!selectedFilePath) {
@@ -1424,9 +1555,6 @@ const App = () => {
   };
 
   const switchView = (nextView: AppView) => {
-    if (activeView === 'editor' && nextView !== 'editor' && !confirmDiscardEditorChanges()) {
-      return;
-    }
     setActiveView(nextView);
   };
 
@@ -1451,15 +1579,10 @@ const App = () => {
         targetPath = relative;
       }
 
-      if (!confirmDiscardEditorChanges()) {
-        return;
-      }
-
-      setActiveView('editor');
-      void loadEditorFile(targetPath);
+      void openEditorTab(targetPath);
       setIsMenuOpen(false);
     },
-    [confirmDiscardEditorChanges, editorWorkspaceRoot, loadEditorFile, showToast],
+    [editorWorkspaceRoot, openEditorTab, showToast],
   );
 
   const switchViewBySwipe = (direction: SwipeDirection) => {
@@ -1525,8 +1648,14 @@ const App = () => {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#212121] text-[#ececec]">
       {isCreatePanelOpen ? (
-        <section className="relative z-10 px-3 pt-3">
-          <Card className="border-white/10 bg-[#171717]">
+        <section
+          className="fixed inset-0 z-40 flex items-start justify-center bg-black/55 px-3 pt-8 pb-4 backdrop-blur-sm"
+          onClick={() => setIsCreatePanelOpen(false)}
+        >
+          <Card
+            className="w-full max-w-5xl border-white/10 bg-[#171717]"
+            onClick={(event) => event.stopPropagation()}
+          >
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-base">New Session</CardTitle>
@@ -1915,7 +2044,7 @@ const App = () => {
                   type="button"
                   className={toSidebarRowClassName(false)}
                   onClick={() => {
-                    void handleCreateBlankChat();
+                    openChatCreateDialog();
                   }}
                 >
                   <MessageSquareIcon className="size-4" />
@@ -1923,10 +2052,9 @@ const App = () => {
                 </button>
                 <button
                   type="button"
-                  className={toSidebarRowClassName(activeView === 'terminal')}
+                  className={toSidebarRowClassName(activeWorkbenchKind === 'terminal')}
                   onClick={() => {
-                    switchView('terminal');
-                    setIsMenuOpen(false);
+                    openTerminalCreateDialog();
                   }}
                 >
                   <TerminalSquareIcon className="size-4" />
@@ -1935,9 +2063,9 @@ const App = () => {
                 </button>
                 <button
                   type="button"
-                  className={toSidebarRowClassName(activeView === 'editor')}
+                  className={toSidebarRowClassName(activeWorkbenchKind === 'editor')}
                   onClick={() => {
-                    switchView('editor');
+                    handleFocusEditorWorkbench();
                     setIsMenuOpen(false);
                   }}
                 >
@@ -1947,59 +2075,52 @@ const App = () => {
               </div>
               <div className="h-px bg-white/10" />
 
-              <div className="grid gap-1.5 pb-2">
-                <p className="px-1 text-[11px] text-[#8d8d8d]">あなたのチャット</p>
-                {chats.length === 0 ? (
-                  <div className="px-2 py-2 text-sm text-[#9f9f9f]">チャット履歴はまだありません</div>
-                ) : null}
-                {chats.map((chat, index) => {
-                  const isSelected = chat.id === selectedChatId;
-                  return (
-                    <button
-                      key={chat.id}
-                      type="button"
-                      className={toSidebarRowClassName(isSelected)}
-                      onClick={() => {
-                        setSelectedChatId(chat.id);
-                        switchView('chat');
-                        setIsMenuOpen(false);
-                      }}
-                    >
-                      <MessageSquareIcon className="size-4" />
-                      <span className="min-w-0 flex-1 truncate">{toChatSidebarLabel(chat.preview || '(untitled)')}</span>
-                      <span
-                        className={cn(
-                          'size-1.5 rounded-full',
-                          !isSelected && index < 2 ? 'bg-white/70' : 'bg-transparent',
-                        )}
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-
-              {activeView === 'editor' ? (
-                <div className="rounded-xl border border-white/10 bg-black/20 p-2">
-                  <div className="mb-2 px-1 text-[11px] text-[#8d8d8d]">エディタファイル</div>
+              {activeView === 'chat' ? (
+                <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+                  <p className="mb-1 px-1 text-[11px] text-[#8d8d8d]">あなたのチャット</p>
+                  <div className="grid gap-1">
+                    {chats.length === 0 ? (
+                      <div className="px-2 py-2 text-sm text-[#9f9f9f]">チャット履歴はまだありません</div>
+                    ) : null}
+                    {chats.map((chat, index) => {
+                      const isSelected = chat.id === selectedChatId;
+                      return (
+                        <button
+                          key={chat.id}
+                          type="button"
+                          className={toSidebarRowClassName(isSelected)}
+                          onClick={() => {
+                            setSelectedChatId(chat.id);
+                            switchView('chat');
+                            setIsMenuOpen(false);
+                          }}
+                        >
+                          <MessageSquareIcon className="size-4" />
+                          <span className="min-w-0 flex-1 truncate">
+                            {toChatSidebarLabel(chat.preview || '(untitled)')}
+                          </span>
+                          <span
+                            className={cn(
+                              'size-1.5 rounded-full',
+                              !isSelected && index < 2 ? 'bg-white/70' : 'bg-transparent',
+                            )}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="min-h-0 flex-1 overflow-hidden bg-[#181818]">
                   <FileTree
-                    currentPath={editorTreePath}
                     selectedFilePath={selectedFilePath}
-                    isLoading={isLoadingEditorCatalog || isLoadingEditorTree}
-                    isLoadingBookmarks={isLoadingEditorBookmarks}
-                    bookmarkPendingPath={bookmarkPendingPath}
                     bookmarks={editorBookmarks}
-                    nodes={editorTreeNodes}
-                    errorMessage={
-                      editorWorkspaceRoot === null
-                        ? 'WORKSPACE_ROOT is not configured.'
-                        : editorLoadError
-                    }
-                    onOpenDirectory={handleOpenEditorDirectory}
+                    errorMessage={editorWorkspaceRoot === null ? 'WORKSPACE_ROOT is not configured.' : null}
+                    onLoadDirectory={loadEditorDirectory}
                     onSelectFile={handleSelectEditorFile}
-                    onSelectBookmark={handleSelectEditorBookmark}
                   />
                 </div>
-              ) : null}
+              )}
             </CardContent>
           </Card>
         </aside>
@@ -2035,40 +2156,107 @@ const App = () => {
             />
           ) : null}
 
-          {activeView === 'terminal' ? (
-            <TerminalPane
-              terminalId={selectedTerminalId}
-              status={selectedTerminal?.status ?? null}
-              onStreamEvent={handleTerminalStreamEvent}
-              onToast={showToast}
-              onKill={handleKillTerminal}
-              isKillDisabled={!selectedTerminalId || selectedTerminal?.status !== 'running'}
-            />
-          ) : null}
-
-          {activeView === 'editor' ? (
+          {activeView !== 'chat' ? (
             <Card className="h-full min-h-0 border-white/10 bg-[#171717]">
-              <CardContent className="h-full min-h-0 p-3">
-                <EditorPane
-                  filePath={selectedFilePath}
-                  content={editorContent}
-                  isLoading={isLoadingEditorFile}
-                  isSaving={isSavingEditorFile}
-                  isDirty={isEditorDirty}
-                  isBookmarked={isSelectedFileBookmarked}
-                  errorMessage={editorWorkspaceRoot === null ? 'WORKSPACE_ROOT is not configured.' : editorLoadError}
-                  saveErrorMessage={editorSaveError}
-                  saveStatusMessage={editorSaveStatus}
-                  onChange={(value) => {
-                    setEditorContent(value);
-                    setEditorSaveError(null);
-                    setEditorSaveStatus(editorUpdatedAt ? `Loaded ${formatRelative(editorUpdatedAt)}` : null);
-                  }}
-                  onSave={handleSaveEditorFile}
-                  onToggleBookmark={() => {
-                    void handleToggleEditorBookmark();
-                  }}
-                />
+              <CardContent className="grid h-full min-h-0 grid-rows-[auto_1fr] p-0">
+                <div className="flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-black/20 p-2">
+                  {workbenchTabs.length === 0 ? (
+                    <div className="px-2 py-1 text-xs text-[#8d8d8d]">
+                      Open a file from the directory tree or create a terminal tab.
+                    </div>
+                  ) : null}
+                  {workbenchTabs.map((tab) => {
+                    const isActive = tab.id === activeWorkbenchTabId;
+                    const isDirtyTab =
+                      tab.kind === 'editor' &&
+                      tab.resourceId === selectedFilePath &&
+                      isEditorDirty;
+                    const terminalForTab =
+                      tab.kind === 'terminal'
+                        ? terminals.find((terminal) => terminal.id === tab.resourceId) ?? null
+                        : null;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className={cn(
+                          'group inline-flex max-w-72 items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors',
+                          isActive
+                            ? 'border-white/30 bg-white/[0.12] text-white'
+                            : 'border-white/10 bg-white/[0.03] text-[#cfcfcf] hover:bg-white/[0.08]',
+                        )}
+                        onClick={() => {
+                          activateWorkbenchTab(tab);
+                        }}
+                      >
+                        {tab.kind === 'terminal' ? (
+                          <TerminalSquareIcon className="size-3.5 shrink-0" />
+                        ) : (
+                          <FilePenLineIcon className="size-3.5 shrink-0" />
+                        )}
+                        <span className="truncate">
+                          {tab.kind === 'terminal'
+                            ? toTerminalTabLabel(terminalForTab)
+                            : toFileTabLabel(tab.resourceId)}
+                        </span>
+                        {isDirtyTab ? <span className="text-[10px] text-amber-300">*</span> : null}
+                        <span
+                          className="ml-1 rounded p-0.5 text-[#9f9f9f] hover:bg-white/10 hover:text-white"
+                          role="button"
+                          aria-label="Close tab"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeWorkbenchTab(tab.id);
+                          }}
+                        >
+                          <XIcon className="size-3" />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="min-h-0 p-3">
+                  {activeWorkbenchTab?.kind === 'terminal' ? (
+                    <TerminalPane
+                      terminalId={activeWorkbenchTab.resourceId}
+                      status={activeWorkbenchTerminal?.status ?? null}
+                      onStreamEvent={handleTerminalStreamEvent}
+                      onToast={showToast}
+                      onKill={handleKillTerminal}
+                      isKillDisabled={!activeWorkbenchTerminal || activeWorkbenchTerminal.status !== 'running'}
+                    />
+                  ) : null}
+
+                  {activeWorkbenchTab?.kind === 'editor' ? (
+                    <EditorPane
+                      filePath={selectedFilePath}
+                      content={editorContent}
+                      isLoading={isLoadingEditorFile}
+                      isSaving={isSavingEditorFile}
+                      isDirty={isEditorDirty}
+                      isBookmarked={isSelectedFileBookmarked}
+                      errorMessage={editorWorkspaceRoot === null ? 'WORKSPACE_ROOT is not configured.' : editorLoadError}
+                      saveErrorMessage={editorSaveError}
+                      saveStatusMessage={editorSaveStatus}
+                      onChange={(value) => {
+                        setEditorContent(value);
+                        setEditorSaveError(null);
+                        setEditorSaveStatus(editorUpdatedAt ? `Loaded ${formatRelative(editorUpdatedAt)}` : null);
+                      }}
+                      onSave={handleSaveEditorFile}
+                      onToggleBookmark={() => {
+                        void handleToggleEditorBookmark();
+                      }}
+                    />
+                  ) : null}
+
+                  {!activeWorkbenchTab ? (
+                    <div className="grid h-full place-items-center rounded-xl border border-dashed border-white/15 bg-black/20 p-6 text-sm text-[#9f9f9f]">
+                      No active tab. Open a file from the directory tree or create a terminal.
+                    </div>
+                  ) : null}
+                </div>
               </CardContent>
             </Card>
           ) : null}
@@ -2087,12 +2275,12 @@ const App = () => {
             Chat ID: {selectedChat.id}
           </div>
         ) : null}
-        {activeView === 'terminal' && selectedTerminal ? (
+        {activeView !== 'chat' && activeWorkbenchTab?.kind === 'terminal' && activeWorkbenchTerminal ? (
           <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
-            Terminal ID: {selectedTerminal.id}
+            Terminal ID: {activeWorkbenchTerminal.id}
           </div>
         ) : null}
-        {activeView === 'editor' && selectedFilePath ? (
+        {activeView !== 'chat' && activeWorkbenchTab?.kind === 'editor' && selectedFilePath ? (
           <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
             File: {selectedFilePath}
           </div>
