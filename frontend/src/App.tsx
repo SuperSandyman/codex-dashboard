@@ -1640,8 +1640,8 @@ const App = () => {
     return cn(
       'flex w-full items-center gap-3 rounded-none px-2.5 py-2 text-left text-sm transition-colors',
       isSelected
-        ? 'bg-white/[0.12] text-white'
-        : 'text-[#cfcfcf] hover:bg-white/[0.06]',
+        ? 'bg-white/[0.14] text-white'
+        : 'text-[#f1f1f1] hover:bg-white/[0.06] hover:text-white',
     );
   };
 
@@ -2038,7 +2038,7 @@ const App = () => {
           )}
         >
           <Card className="h-full min-h-0 rounded-none border-white/10 bg-[#181818]">
-            <CardContent className="sidebar-scrollbar flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2">
+            <CardContent className="sidebar-scrollbar flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2 text-[#f1f1f1]">
               <div className="grid gap-1">
                 <button
                   type="button"
@@ -2059,7 +2059,7 @@ const App = () => {
                 >
                   <TerminalSquareIcon className="size-4" />
                   <span>ターミナル</span>
-                  {isLoadingTerminals ? <span className="ml-auto text-[10px] text-[#8d8d8d]">読み込み中</span> : null}
+                  {isLoadingTerminals ? <span className="ml-auto text-[10px] text-[#c7c7c7]">読み込み中</span> : null}
                 </button>
                 <button
                   type="button"
@@ -2077,10 +2077,10 @@ const App = () => {
 
               {activeView === 'chat' ? (
                 <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-                  <p className="mb-1 px-1 text-[11px] text-[#8d8d8d]">あなたのチャット</p>
+                  <p className="mb-1 px-1 text-[11px] text-[#d0d0d0]">あなたのチャット</p>
                   <div className="grid gap-1">
                     {chats.length === 0 ? (
-                      <div className="px-2 py-2 text-sm text-[#9f9f9f]">チャット履歴はまだありません</div>
+                      <div className="px-2 py-2 text-sm text-[#d0d0d0]">チャット履歴はまだありません</div>
                     ) : null}
                     {chats.map((chat, index) => {
                       const isSelected = chat.id === selectedChatId;

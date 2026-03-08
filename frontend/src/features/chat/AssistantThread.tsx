@@ -199,7 +199,7 @@ const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
         ref={ref}
         title={tooltip}
         className={cn(
-          'inline-flex size-6 items-center justify-center rounded-md p-1 text-[#b4b4b4] transition-colors hover:bg-white/10 hover:text-white',
+          'inline-flex size-6 items-center justify-center rounded-md p-1 text-white transition-colors hover:bg-white/10 hover:text-white',
           className,
         )}
         {...props}
@@ -211,8 +211,21 @@ const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
 );
 IconButton.displayName = 'IconButton';
 
-const messageMarkdownClassName =
-  'prose prose-invert max-w-none text-base prose-p:my-1 prose-pre:my-1.5 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6';
+const messageMarkdownClassName = [
+  'prose prose-invert max-w-none text-[15px] leading-7',
+  'prose-p:my-2 prose-p:text-white prose-headings:my-3 prose-headings:font-semibold prose-headings:text-white',
+  'prose-strong:text-white prose-a:text-inherit prose-li:text-white',
+  'prose-code:rounded-md prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.78rem] prose-code:text-white',
+  'prose-code:before:content-none prose-code:after:content-none',
+  'prose-pre:my-2 prose-pre:bg-transparent prose-pre:p-0',
+  '[&_pre_code]:bg-transparent [&_pre_code]:px-0 [&_pre_code]:py-0 [&_pre_code]:text-inherit [&_pre_code]:rounded-none',
+  'prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6',
+  'prose-blockquote:my-3 prose-blockquote:rounded-r-lg prose-blockquote:border-l-white/25 prose-blockquote:bg-white/[0.03] prose-blockquote:py-1 prose-blockquote:pl-4 prose-blockquote:text-white',
+  'prose-hr:border-white/10 prose-img:my-2 prose-img:rounded-xl',
+  'prose-table:my-2 prose-table:w-full prose-thead:border-white/10 prose-tbody:divide-y prose-tbody:divide-white/10',
+  'prose-th:border-white/10 prose-th:bg-white/[0.04] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-white',
+  'prose-td:border-white/10 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:text-white',
+].join(' ');
 
 const UserText = ({ text, onOpenFile }: { readonly text: string; readonly onOpenFile?: (path: string) => void }) => {
   return (
@@ -233,10 +246,10 @@ const AssistantText = ({ text, onOpenFile }: { readonly text: string; readonly o
 const AssistantReasoning = ({ text, onOpenFile }: { readonly text: string; readonly onOpenFile?: (path: string) => void }) => {
   return (
     <details className="mt-1 opacity-60">
-      <summary className="cursor-pointer text-[11px] text-[#8f8f8f]">
+      <summary className="cursor-pointer text-[11px] text-white">
         <strong>Reasoning</strong>
       </summary>
-      <div className={cn('mt-1 text-[#9f9f9f]', messageMarkdownClassName)}>
+      <div className={cn('mt-1 text-white', messageMarkdownClassName)}>
         <MarkdownBlock text={text} onOpenFile={onOpenFile} />
       </div>
     </details>
@@ -247,7 +260,7 @@ const BranchPicker = ({ className }: { readonly className?: string }) => {
   return (
     <BranchPickerPrimitive.Root
       hideWhenSingleBranch
-      className={cn('inline-flex items-center gap-1 font-semibold text-[#b4b4b4] text-xs', className)}
+      className={cn('inline-flex items-center gap-1 font-semibold text-white text-xs', className)}
     >
       <BranchPickerPrimitive.Previous asChild>
         <IconButton tooltip="Previous">
@@ -267,8 +280,8 @@ const BranchPicker = ({ className }: { readonly className?: string }) => {
 const UserMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => void }) => {
   return (
     <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl flex-col items-end gap-1">
-      <div className="ml-auto flex w-full max-w-[85%] items-start justify-end gap-2">
-        <div className="rounded-3xl bg-white/5 px-4 py-1.5 text-[#eeeeee]">
+      <div className="ml-auto flex w-fit max-w-[85%] flex-col items-end gap-1">
+        <div className="min-w-0 rounded-3xl bg-white/5 px-4 py-1.5 text-left text-[#f5f5f5]">
           <MessagePrimitive.Parts
             components={{
               Text: (props) => <UserText {...props} onOpenFile={onOpenFile} />,
@@ -276,7 +289,10 @@ const UserMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => v
           />
         </div>
 
-        <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" autohideFloat="single-branch" className="mt-1">
+        <ActionBarPrimitive.Root
+          hideWhenRunning
+          className="mt-0.5 self-end rounded-lg"
+        >
           <ActionBarPrimitive.Edit asChild>
             <IconButton tooltip="Edit">
               <PencilIcon className="size-3.5" />
@@ -285,7 +301,7 @@ const UserMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => v
         </ActionBarPrimitive.Root>
       </div>
 
-      <BranchPicker className="mr-8 mt-1" />
+      <BranchPicker className="mr-1 mt-1" />
     </MessagePrimitive.Root>
   );
 };
@@ -311,7 +327,7 @@ const AssistantMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string)
   return (
     <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl">
       <div className="pt-1">
-        <div className="text-[#eeeeee]">
+        <div className="text-white">
           <MessagePrimitive.Parts
             components={{
               Text: (props) => <AssistantText {...props} onOpenFile={onOpenFile} />,
@@ -354,7 +370,7 @@ const AssistantMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string)
 const SystemMessage = () => {
   return (
     <MessagePrimitive.Root className="mx-auto w-full max-w-3xl">
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-[#b4b4b4]">
+      <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white">
         <MessagePrimitive.Parts />
       </div>
     </MessagePrimitive.Root>
@@ -574,7 +590,7 @@ const Composer = ({
         ) : null}
       </div>
       <ComposerPrimitive.Input
-        placeholder="Message ChatGPT"
+        placeholder="Message Codex"
         className="h-12 max-h-40 grow resize-none bg-transparent p-3.5 text-sm text-white outline-none placeholder:text-white/50"
       />
       <AuiIf condition={(state) => !state.thread.isRunning}>
@@ -664,7 +680,7 @@ export const AssistantThread = ({
               isUpdatingLaunchOptions={isUpdatingLaunchOptions}
               onUpdateLaunchOptions={onUpdateLaunchOptions}
             />
-            <p className="p-2 text-center text-[#cdcdcd] text-xs">ChatGPT can make mistakes. Check important info.</p>
+            <p className="p-2 text-center text-white text-xs">Codex can make mistakes. Check important info.</p>
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>

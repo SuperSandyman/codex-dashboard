@@ -74,7 +74,7 @@ const toUserInputResponsePayload = (
 };
 
 /**
- * ChatGPT風テーマでチャット表示し、承認系入力のみ下部に表示する。
+ * Codex風テーマでチャット表示し、承認系入力のみ下部に表示する。
  * @param props ChatPane プロパティ
  */
 export const ChatPane = (props: ChatPaneProps) => {
@@ -119,10 +119,10 @@ export const ChatPane = (props: ChatPaneProps) => {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-2xl bg-[#212121] text-[#ececec]">
+    <div className="flex h-full min-h-0 flex-col rounded-2xl bg-[#212121] text-white">
       <div className="min-h-0 flex-1">
         {!chatId ? (
-          <div className="grid h-full place-items-center p-6 text-sm text-[#b4b4b4]">Select or create a chat to start.</div>
+          <div className="grid h-full place-items-center p-6 text-sm text-white">Select or create a chat to start.</div>
         ) : (
           <AssistantThread
             messages={messages}
@@ -157,19 +157,19 @@ export const ChatPane = (props: ChatPaneProps) => {
             return (
               <div key={request.itemId} className="grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="font-medium text-[#ececec]">Approval Required</p>
-                  <Badge className="border border-white/10 bg-white/[0.04] text-[#b4b4b4]" variant="outline">
+                  <p className="font-medium text-white">Approval Required</p>
+                  <Badge className="border border-white/10 bg-white/[0.04] text-white" variant="outline">
                     {formatApprovalKind(request.kind)}
                   </Badge>
                 </div>
-                {request.reason ? <p className="text-[#b4b4b4]">{request.reason}</p> : null}
+                {request.reason ? <p className="text-white">{request.reason}</p> : null}
                 {request.command ? (
                   <pre className="max-h-40 overflow-auto rounded-md border border-white/10 bg-black/25 p-2 text-xs text-[#d4d4d4]">
                     <code>{request.command}</code>
                   </pre>
                 ) : null}
-                {request.cwd ? <div className="text-xs text-[#9f9f9f]">cwd: {request.cwd}</div> : null}
-                {request.grantRoot ? <div className="text-xs text-[#9f9f9f]">grantRoot: {request.grantRoot}</div> : null}
+                {request.cwd ? <div className="text-xs text-[#d8d8d8]">cwd: {request.cwd}</div> : null}
+                {request.grantRoot ? <div className="text-xs text-[#d8d8d8]">grantRoot: {request.grantRoot}</div> : null}
                 <div className="flex items-center justify-end gap-2">
                   <Button
                     type="button"
@@ -199,8 +199,8 @@ export const ChatPane = (props: ChatPaneProps) => {
             return (
               <div key={request.itemId} className="grid gap-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="font-medium text-[#ececec]">Input Required</p>
-                  <Badge className="border border-white/10 bg-white/[0.04] text-[#b4b4b4]" variant="outline">
+                  <p className="font-medium text-white">Input Required</p>
+                  <Badge className="border border-white/10 bg-white/[0.04] text-white" variant="outline">
                     Tool User Input
                   </Badge>
                 </div>
@@ -211,8 +211,8 @@ export const ChatPane = (props: ChatPaneProps) => {
                   const shouldUseSelect = !question.isOther && Boolean(question.options && question.options.length > 0);
                   return (
                     <div key={question.id} className="grid gap-1.5 rounded-md border border-white/10 bg-black/20 p-3">
-                      <div className="text-xs font-medium text-[#b4b4b4]">{question.header}</div>
-                      <p className="text-sm text-[#ececec]">{question.question}</p>
+                      <div className="text-xs font-medium text-white">{question.header}</div>
+                      <p className="text-sm text-white">{question.question}</p>
                       {shouldUseSelect ? (
                         <>
                           <Select
@@ -230,7 +230,7 @@ export const ChatPane = (props: ChatPaneProps) => {
                               </option>
                             ))}
                           </Select>
-                          {selectedOption ? <p className="text-xs text-[#a8a8a8]">{selectedOption.description}</p> : null}
+                          {selectedOption ? <p className="text-xs text-[#d8d8d8]">{selectedOption.description}</p> : null}
                         </>
                       ) : (
                         <Input
