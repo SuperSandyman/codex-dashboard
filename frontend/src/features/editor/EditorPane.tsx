@@ -62,21 +62,23 @@ export const EditorPane = ({
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_auto_1fr] gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 bg-card/80 px-3 py-2">
+      <div className="flex flex-col items-stretch gap-3 rounded-xl border border-border/60 bg-card/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <div
-          className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm text-muted-foreground"
+          className="max-w-full break-all text-sm text-muted-foreground sm:overflow-hidden sm:text-ellipsis sm:whitespace-nowrap"
           onTouchStart={(event) => event.stopPropagation()}
           onTouchEnd={(event) => event.stopPropagation()}
           title={filePath}
         >
           {filePath}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" type="button" onClick={onToggleBookmark}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Button className="w-full sm:w-auto" variant="outline" size="sm" type="button" onClick={onToggleBookmark}>
             {isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
           </Button>
-          <Badge variant={isDirty ? 'destructive' : 'success'}>{isDirty ? 'Unsaved' : 'Saved'}</Badge>
-          <Button type="button" size="sm" onClick={onSave} disabled={isSaving || !isDirty}>
+          <Badge className="self-start sm:self-auto" variant={isDirty ? 'destructive' : 'success'}>
+            {isDirty ? 'Unsaved' : 'Saved'}
+          </Badge>
+          <Button className="w-full sm:w-auto" type="button" size="sm" onClick={onSave} disabled={isSaving || !isDirty}>
             {isSaving ? 'Saving...' : 'Save'}
           </Button>
         </div>

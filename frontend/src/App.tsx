@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 import {
   FilePenLineIcon,
+  MenuIcon,
   MessageSquareIcon,
   TerminalSquareIcon,
   XIcon,
@@ -1649,11 +1650,11 @@ const App = () => {
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#212121] text-[#ececec]">
       {isCreatePanelOpen ? (
         <section
-          className="fixed inset-0 z-40 flex items-start justify-center bg-black/55 px-3 pt-8 pb-4 backdrop-blur-sm"
+          className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/55 px-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+1rem)] backdrop-blur-sm sm:px-4 sm:pt-8"
           onClick={() => setIsCreatePanelOpen(false)}
         >
           <Card
-            className="w-full max-w-5xl border-white/10 bg-[#171717]"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-5xl overflow-hidden border-white/10 bg-[#171717] sm:max-h-[calc(100dvh-3rem)]"
             onClick={(event) => event.stopPropagation()}
           >
             <CardHeader className="pb-3">
@@ -1679,7 +1680,7 @@ const App = () => {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="grid gap-3 pt-0">
+            <CardContent className="grid gap-3 overflow-y-auto pt-0">
 
               {createMode === 'chat' ? (
                 <>
@@ -2013,15 +2014,18 @@ const App = () => {
       ) : null}
 
       <main className="relative z-10 flex min-h-0 flex-1 gap-0 p-0">
-        <Button
-          className="fixed left-3 top-3 z-40 md:hidden"
-          variant="outline"
-          size="sm"
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-30 h-20 bg-[linear-gradient(180deg,rgba(33,33,33,0.56)_0%,rgba(33,33,33,0.28)_45%,rgba(33,33,33,0)_100%)] md:hidden" />
+        <button
+          className={cn(
+            'fixed left-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-40 inline-flex size-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white backdrop-blur-md transition-[opacity,background-color,border-color] hover:border-white/20 hover:bg-white/[0.06] md:hidden',
+            isMenuOpen ? 'pointer-events-none opacity-0' : 'opacity-100',
+          )}
           type="button"
           onClick={() => setIsMenuOpen((prev) => !prev)}
+          aria-label="Open menu"
         >
-          Menu
-        </Button>
+          <MenuIcon className="size-5 text-white" />
+        </button>
 
         <div
           className={cn(
@@ -2033,7 +2037,7 @@ const App = () => {
 
         <aside
           className={cn(
-            'sidebar-scrollbar fixed inset-y-0 left-0 z-30 w-[17rem] max-w-[90vw] overflow-y-auto bg-[#181818] p-3 shadow-xl transition-transform duration-300 ease-in-out md:static md:z-auto md:w-72 md:max-w-none md:translate-x-0 md:bg-transparent md:p-0 md:shadow-none',
+            'sidebar-scrollbar fixed inset-y-0 left-0 z-30 w-[17rem] max-w-[90vw] overflow-y-auto bg-[#181818] p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-xl transition-transform duration-300 ease-in-out md:static md:z-auto md:w-72 md:max-w-none md:translate-x-0 md:bg-transparent md:p-0 md:shadow-none',
             isMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
           )}
         >
@@ -2126,7 +2130,7 @@ const App = () => {
         </aside>
 
         <section
-          className="min-h-0 flex-1 transition-all duration-300 ease-out"
+          className="min-h-0 min-w-0 flex-1 transition-all duration-300 ease-out"
           onTouchStart={handleMobileSwitcherTouchStart}
           onTouchEnd={handleMobileSwitcherTouchEnd}
         >
@@ -2157,9 +2161,9 @@ const App = () => {
           ) : null}
 
           {activeView !== 'chat' ? (
-            <Card className="h-full min-h-0 border-white/10 bg-[#171717]">
+            <Card className="mx-2 mb-2 h-[calc(100%-0.5rem)] min-h-0 border-white/10 bg-[#171717] md:mx-0 md:mb-0 md:h-full">
               <CardContent className="grid h-full min-h-0 grid-rows-[auto_1fr] p-0">
-                <div className="flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-black/20 p-2">
+                <div className="flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-black/20 px-2 py-2">
                   {workbenchTabs.length === 0 ? (
                     <div className="px-2 py-1 text-xs text-[#8d8d8d]">
                       Open a file from the directory tree or create a terminal tab.
@@ -2180,7 +2184,7 @@ const App = () => {
                         key={tab.id}
                         type="button"
                         className={cn(
-                          'group inline-flex max-w-72 items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors',
+                          'group inline-flex max-w-[14rem] items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors sm:max-w-72',
                           isActive
                             ? 'border-white/30 bg-white/[0.12] text-white'
                             : 'border-white/10 bg-white/[0.03] text-[#cfcfcf] hover:bg-white/[0.08]',
@@ -2216,7 +2220,7 @@ const App = () => {
                   })}
                 </div>
 
-                <div className="min-h-0 p-3">
+                <div className="min-h-0 min-w-0 p-2 sm:p-3">
                   {activeWorkbenchTab?.kind === 'terminal' ? (
                     <TerminalPane
                       terminalId={activeWorkbenchTab.resourceId}
@@ -2252,7 +2256,7 @@ const App = () => {
                   ) : null}
 
                   {!activeWorkbenchTab ? (
-                    <div className="grid h-full place-items-center rounded-xl border border-dashed border-white/15 bg-black/20 p-6 text-sm text-[#9f9f9f]">
+                    <div className="grid h-full place-items-center rounded-xl border border-dashed border-white/15 bg-black/20 p-6 text-center text-sm text-[#9f9f9f]">
                       No active tab. Open a file from the directory tree or create a terminal.
                     </div>
                   ) : null}
@@ -2264,24 +2268,24 @@ const App = () => {
       </main>
 
       {toast ? (
-        <div className="pointer-events-none absolute right-3 bottom-3 z-40 rounded-lg border border-white/20 bg-[#2a2a2a] px-3 py-2 text-sm text-[#ececec] shadow-lg shadow-black/30">
+        <div className="pointer-events-none fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-40 rounded-lg border border-white/20 bg-[#2a2a2a] px-3 py-2 text-center text-sm text-[#ececec] shadow-lg shadow-black/30 md:absolute md:inset-x-auto md:right-3 md:bottom-3 md:text-left">
           {toast.message}
         </div>
       ) : null}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center pb-1">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden justify-center pb-[calc(env(safe-area-inset-bottom)+0.25rem)] sm:flex">
         {activeView === 'chat' && selectedChat ? (
-          <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
+          <div className="max-w-[calc(100vw-2rem)] truncate rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
             Chat ID: {selectedChat.id}
           </div>
         ) : null}
         {activeView !== 'chat' && activeWorkbenchTab?.kind === 'terminal' && activeWorkbenchTerminal ? (
-          <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
+          <div className="max-w-[calc(100vw-2rem)] truncate rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
             Terminal ID: {activeWorkbenchTerminal.id}
           </div>
         ) : null}
         {activeView !== 'chat' && activeWorkbenchTab?.kind === 'editor' && selectedFilePath ? (
-          <div className="rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
+          <div className="max-w-[calc(100vw-2rem)] truncate rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
             File: {selectedFilePath}
           </div>
         ) : null}

@@ -279,9 +279,9 @@ const BranchPicker = ({ className }: { readonly className?: string }) => {
 
 const UserMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => void }) => {
   return (
-    <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl flex-col items-end gap-1">
-      <div className="ml-auto flex w-fit max-w-[85%] flex-col items-end gap-1">
-        <div className="min-w-0 rounded-3xl bg-white/5 px-4 py-1.5 text-left text-[#f5f5f5]">
+    <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl flex-col items-end gap-1 px-0.5 sm:px-0">
+      <div className="ml-auto flex w-fit max-w-[92%] flex-col items-end gap-1 sm:max-w-[85%]">
+        <div className="min-w-0 rounded-3xl bg-white/5 px-4 py-2 text-left text-[#f5f5f5] sm:py-1.5">
           <MessagePrimitive.Parts
             components={{
               Text: (props) => <UserText {...props} onOpenFile={onOpenFile} />,
@@ -308,10 +308,10 @@ const UserMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => v
 
 const EditComposer = () => {
   return (
-    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-3xl flex-col justify-end gap-1 rounded-3xl bg-white/15">
-      <ComposerPrimitive.Input className="flex min-h-14 w-full resize-none bg-transparent p-5 pb-0 text-white outline-none" />
+    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-[1.75rem] bg-white/15 p-2 sm:rounded-3xl sm:p-3">
+      <ComposerPrimitive.Input className="h-11 max-h-32 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-white outline-none" />
 
-      <div className="m-3 mt-2 flex items-center justify-center gap-2 self-end">
+      <div className="flex items-center justify-end gap-2 self-end">
         <ComposerPrimitive.Cancel className="rounded-full bg-zinc-900 px-3 py-2 font-semibold text-sm text-white hover:bg-zinc-800">
           Cancel
         </ComposerPrimitive.Cancel>
@@ -325,7 +325,7 @@ const EditComposer = () => {
 
 const AssistantMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string) => void }) => {
   return (
-    <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl">
+    <MessagePrimitive.Root className="relative mx-auto flex w-full max-w-3xl px-0.5 sm:px-0">
       <div className="pt-1">
         <div className="text-white">
           <MessagePrimitive.Parts
@@ -369,7 +369,7 @@ const AssistantMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string)
 
 const SystemMessage = () => {
   return (
-    <MessagePrimitive.Root className="mx-auto w-full max-w-3xl">
+    <MessagePrimitive.Root className="mx-auto w-full max-w-3xl px-0.5 sm:px-0">
       <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white">
         <MessagePrimitive.Parts />
       </div>
@@ -487,13 +487,13 @@ const Composer = ({
   };
 
   return (
-    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-3xl items-end gap-1 rounded-3xl bg-white/5 pl-2 pr-1">
-      <div className="relative mb-2" ref={settingsPanelRef}>
+    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-none items-end gap-1 border-t border-white/10 bg-[#212121]/98 px-3 py-2 sm:max-w-3xl sm:rounded-3xl sm:border-none sm:bg-white/5 sm:p-2 sm:pl-2 sm:pr-1 sm:py-1">
+      <div className="relative" ref={settingsPanelRef}>
         <button
           type="button"
           title="Chat settings"
           disabled={!launchOptions}
-          className="inline-flex size-8 items-center justify-center rounded-full bg-white/[0.08] text-[#d8d8d8] transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex size-9 items-center justify-center rounded-full bg-white/[0.08] text-[#d8d8d8] transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40 sm:size-8"
           onClick={() => {
             setIsSettingsOpen((prev) => !prev);
           }}
@@ -502,7 +502,7 @@ const Composer = ({
         </button>
 
         {isSettingsOpen ? (
-          <div className="absolute bottom-10 left-0 z-30 w-[18rem] rounded-xl border border-white/10 bg-[#1b1b1b] p-3 shadow-2xl shadow-black/45">
+          <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-30 w-[min(18rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-xl border border-white/10 bg-[#1b1b1b] p-3 shadow-2xl shadow-black/45 sm:w-[18rem] sm:max-w-none">
             <div className="grid gap-2.5 text-sm">
               <label className="grid gap-1">
                 <span className="text-[11px] text-[#999999]">Model</span>
@@ -591,18 +591,20 @@ const Composer = ({
       </div>
       <ComposerPrimitive.Input
         placeholder="Message Codex"
-        className="h-12 max-h-40 grow resize-none bg-transparent p-3.5 text-sm text-white outline-none placeholder:text-white/50"
+        className="h-11 max-h-32 min-h-11 grow resize-none bg-transparent px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/50"
       />
-      <AuiIf condition={(state) => !state.thread.isRunning}>
-        <ComposerPrimitive.Send className="m-2 flex size-8 items-center justify-center rounded-full bg-white transition-opacity disabled:opacity-10">
-          <ArrowUpIcon className="size-4 text-black" />
-        </ComposerPrimitive.Send>
-      </AuiIf>
-      <AuiIf condition={(state) => state.thread.isRunning}>
-        <ComposerPrimitive.Cancel className="m-2 flex size-8 items-center justify-center rounded-full bg-white">
-          <SquareIcon className="size-2.5 fill-black text-black" />
-        </ComposerPrimitive.Cancel>
-      </AuiIf>
+      <div className="flex items-center justify-end gap-2 sm:mb-2 sm:mr-1">
+        <AuiIf condition={(state) => !state.thread.isRunning}>
+          <ComposerPrimitive.Send className="flex h-9 min-w-9 items-center justify-center rounded-full bg-white px-3 transition-opacity disabled:opacity-10 sm:size-8 sm:px-0">
+            <ArrowUpIcon className="size-4 text-black" />
+          </ComposerPrimitive.Send>
+        </AuiIf>
+        <AuiIf condition={(state) => state.thread.isRunning}>
+          <ComposerPrimitive.Cancel className="flex h-9 min-w-9 items-center justify-center rounded-full bg-white px-3 sm:size-8 sm:px-0">
+            <SquareIcon className="size-2.5 fill-black text-black" />
+          </ComposerPrimitive.Cancel>
+        </AuiIf>
+      </div>
     </ComposerPrimitive.Root>
   );
 };
@@ -644,15 +646,16 @@ export const AssistantThread = ({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadPrimitive.Root className="dark relative flex h-full min-h-0 flex-col items-stretch bg-[#212121] text-[#ececec]">
-        <ThreadPrimitive.Viewport className="flex min-h-0 grow flex-col gap-8 overflow-y-auto pt-8 md:pt-16">
+        <ThreadPrimitive.Viewport className="flex min-h-0 grow flex-col overflow-y-auto px-3 pt-6 sm:px-4 sm:pt-8 md:pt-10">
           <AuiIf condition={(state) => state.thread.isEmpty}>
-            <div className="flex grow flex-col items-center justify-center">
+            <div className="flex grow flex-col items-center justify-center px-6 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-3xl border border-white/15 shadow">C</div>
               <p className="mt-4 text-xl text-white">How can I help you today?</p>
             </div>
           </AuiIf>
 
           <ThreadPrimitive.Messages
+            className="flex flex-col gap-6 sm:gap-8"
             components={{
               UserMessage: () => <UserMessage onOpenFile={onOpenFile} />,
               EditComposer,
@@ -661,12 +664,12 @@ export const AssistantThread = ({
             }}
           />
 
-          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-[#212121] px-4 pb-2">
+          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-[#212121]/95 px-0 pb-[env(safe-area-inset-bottom)] pt-0 backdrop-blur sm:px-4 sm:pb-2 sm:pt-2">
             <ThreadPrimitive.ScrollToBottom asChild>
               <button
                 type="button"
                 title="Scroll to bottom"
-                className="absolute -top-10 right-4 inline-flex size-8 items-center justify-center rounded-full border border-white/10 bg-[#2b2b2b] text-[#d3d3d3] transition-colors hover:bg-[#353535]"
+                className="absolute -top-10 right-3 inline-flex size-8 items-center justify-center rounded-full border border-white/10 bg-[#2b2b2b] text-[#d3d3d3] transition-colors hover:bg-[#353535] sm:right-4"
               >
                 <ChevronRightIcon className="size-4 rotate-90" />
               </button>
@@ -680,7 +683,7 @@ export const AssistantThread = ({
               isUpdatingLaunchOptions={isUpdatingLaunchOptions}
               onUpdateLaunchOptions={onUpdateLaunchOptions}
             />
-            <p className="p-2 text-center text-white text-xs">Codex can make mistakes. Check important info.</p>
+            <p className="hidden px-2 pt-2 text-center text-white text-xs sm:block">Codex can make mistakes. Check important info.</p>
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>

@@ -189,17 +189,22 @@ export const TerminalPane = ({
   }, [onStreamEvent, onToast, reconnectToken, sendPayload, terminalId]);
 
   return (
-    <Card className="h-full min-h-0 border-border/60 bg-card/80">
-      <CardHeader className="pb-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-base">Operations Terminal</CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge variant={status === 'running' ? 'success' : 'outline'}>{status ?? 'unknown'}</Badge>
-            <Badge variant={connectionState === 'connected' ? 'secondary' : 'outline'}>ws: {connectionState}</Badge>
+    <Card className="flex h-full min-h-0 flex-col border-border/60 bg-card/80">
+      <CardHeader className="px-3 pb-2 pt-3 sm:px-6 sm:pt-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="grid gap-2">
+            <CardTitle className="text-sm text-white sm:text-base">Operations Terminal</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={status === 'running' ? 'success' : 'outline'}>{status ?? 'unknown'}</Badge>
+              <Badge variant={connectionState === 'connected' ? 'secondary' : 'outline'}>ws: {connectionState}</Badge>
+            </div>
+          </div>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             <Button
               type="button"
               variant="outline"
               size="sm"
+              className="w-full sm:w-auto"
               onClick={() => setReconnectToken((prev) => prev + 1)}
               disabled={!terminalId || connectionState === 'connecting'}
             >
@@ -209,6 +214,7 @@ export const TerminalPane = ({
               type="button"
               variant="secondary"
               size="sm"
+              className="w-full sm:w-auto"
               onClick={onKill}
               disabled={isKillDisabled}
               aria-label="Kill terminal process"
@@ -219,18 +225,19 @@ export const TerminalPane = ({
         </div>
       </CardHeader>
 
-      <CardContent className="grid h-[calc(100%-3.5rem)] min-h-0 grid-rows-[1fr_auto] gap-2">
+      <CardContent className="grid min-h-0 flex-1 grid-rows-[minmax(16rem,1fr)_auto] gap-2 px-3 pb-3 pt-0 sm:grid-rows-[1fr_auto] sm:px-6 sm:pb-6">
         {!terminalId ? (
-          <div className="grid place-items-center rounded-xl border border-dashed border-border/60 bg-background/40 p-6 text-sm text-muted-foreground">
+          <div className="grid place-items-center rounded-xl border border-dashed border-border/60 bg-background/40 p-6 text-center text-sm text-muted-foreground">
             Select or create a terminal.
           </div>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-black">
+          <div className="min-h-[16rem] overflow-hidden rounded-xl border border-border/60 bg-black sm:min-h-0">
             <div className="h-full min-h-0 p-2" ref={mountRef} />
           </div>
         )}
 
         <Input
+          className="h-10"
           value={commandDraft}
           onChange={(event) => setCommandDraft(event.target.value)}
           placeholder="Run command..."

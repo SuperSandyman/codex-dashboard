@@ -119,7 +119,7 @@ export const ChatPane = (props: ChatPaneProps) => {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-2xl bg-[#212121] text-white">
+    <div className="flex h-full min-h-0 flex-col rounded-none bg-[#212121] text-white md:rounded-2xl">
       <div className="min-h-0 flex-1">
         {!chatId ? (
           <div className="grid h-full place-items-center p-6 text-sm text-white">Select or create a chat to start.</div>
@@ -151,12 +151,12 @@ export const ChatPane = (props: ChatPaneProps) => {
       </div>
 
       {(approvalRequests.length > 0 || userInputRequests.length > 0) ? (
-        <div className="mx-4 mb-3 mt-2 grid max-h-72 gap-2 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <div className="mx-3 mb-3 mt-2 grid max-h-[40vh] gap-2 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:mx-4 sm:max-h-72">
           {approvalRequests.map((request) => {
             const isSubmitting = submittingApprovalItemIds.includes(request.itemId);
             return (
               <div key={request.itemId} className="grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                   <p className="font-medium text-white">Approval Required</p>
                   <Badge className="border border-white/10 bg-white/[0.04] text-white" variant="outline">
                     {formatApprovalKind(request.kind)}
@@ -170,11 +170,11 @@ export const ChatPane = (props: ChatPaneProps) => {
                 ) : null}
                 {request.cwd ? <div className="text-xs text-[#d8d8d8]">cwd: {request.cwd}</div> : null}
                 {request.grantRoot ? <div className="text-xs text-[#d8d8d8]">grantRoot: {request.grantRoot}</div> : null}
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
                   <Button
                     type="button"
                     variant="secondary"
-                    className="bg-[#2f2f2f] text-[#ececec] hover:bg-[#3a3a3a]"
+                    className="w-full bg-[#2f2f2f] text-[#ececec] hover:bg-[#3a3a3a] sm:w-auto"
                     disabled={isSubmitting}
                     onClick={() => onRespondApproval(request.itemId, 'decline')}
                   >
@@ -182,7 +182,7 @@ export const ChatPane = (props: ChatPaneProps) => {
                   </Button>
                   <Button
                     type="button"
-                    className="bg-white text-black hover:bg-white/90"
+                    className="w-full bg-white text-black hover:bg-white/90 sm:w-auto"
                     disabled={isSubmitting}
                     onClick={() => onRespondApproval(request.itemId, 'accept')}
                   >
@@ -198,7 +198,7 @@ export const ChatPane = (props: ChatPaneProps) => {
             const isResolved = isQuestionResolved(userInputDrafts, request);
             return (
               <div key={request.itemId} className="grid gap-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                   <p className="font-medium text-white">Input Required</p>
                   <Badge className="border border-white/10 bg-white/[0.04] text-white" variant="outline">
                     Tool User Input
@@ -247,10 +247,10 @@ export const ChatPane = (props: ChatPaneProps) => {
                   );
                 })}
 
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                   <Button
                     type="button"
-                    className="bg-white text-black hover:bg-white/90"
+                    className="w-full bg-white text-black hover:bg-white/90 sm:w-auto"
                     disabled={isSubmitting || !isResolved}
                     onClick={() => {
                       const payload = toUserInputResponsePayload(userInputDrafts, request);
