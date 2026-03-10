@@ -151,14 +151,14 @@ export const ChatPane = (props: ChatPaneProps) => {
       </div>
 
       {(approvalRequests.length > 0 || userInputRequests.length > 0) ? (
-        <div className="mx-3 mb-3 mt-2 grid max-h-[40vh] gap-2 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:mx-4 sm:max-h-72">
+        <div className="mx-3 mb-3 mt-2 grid max-h-[40vh] gap-2 overflow-y-auto rounded-2xl border border-white/10 bg-white/3 p-3 sm:mx-4 sm:max-h-72">
           {approvalRequests.map((request) => {
             const isSubmitting = submittingApprovalItemIds.includes(request.itemId);
             return (
               <div key={request.itemId} className="grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
                 <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                   <p className="font-medium text-white">Approval Required</p>
-                  <Badge className="border border-white/10 bg-white/[0.04] text-white" variant="outline">
+                  <Badge className="border border-white/10 bg-white/4 text-white" variant="outline">
                     {formatApprovalKind(request.kind)}
                   </Badge>
                 </div>
@@ -200,7 +200,7 @@ export const ChatPane = (props: ChatPaneProps) => {
               <div key={request.itemId} className="grid gap-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
                 <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                   <p className="font-medium text-white">Input Required</p>
-                  <Badge className="border border-white/10 bg-white/[0.04] text-white" variant="outline">
+                  <Badge className="border border-white/10 bg-white/4 text-white" variant="outline">
                     Tool User Input
                   </Badge>
                 </div>

@@ -199,12 +199,12 @@ export const TerminalPane = ({
               <Badge variant={connectionState === 'connected' ? 'secondary' : 'outline'}>ws: {connectionState}</Badge>
             </div>
           </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <div className="flex w-full flex-nowrap items-center gap-2 sm:w-auto">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="w-full sm:w-auto"
+              className="h-8 flex-1 px-2 text-[11px] sm:h-9 sm:flex-none sm:px-3 sm:text-xs"
               onClick={() => setReconnectToken((prev) => prev + 1)}
               disabled={!terminalId || connectionState === 'connecting'}
             >
@@ -214,7 +214,7 @@ export const TerminalPane = ({
               type="button"
               variant="secondary"
               size="sm"
-              className="w-full sm:w-auto"
+              className="h-8 flex-1 px-2 text-[11px] sm:h-9 sm:flex-none sm:px-3 sm:text-xs"
               onClick={onKill}
               disabled={isKillDisabled}
               aria-label="Kill terminal process"

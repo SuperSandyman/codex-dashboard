@@ -231,7 +231,7 @@ const MarkdownCodeBlock = ({ code, language }: MarkdownCodeBlockProps) => {
 
   return (
     <div className="my-2 overflow-hidden rounded-xl border border-white/10 bg-black/30">
-      <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-white/[0.03] px-3 py-2">
+      <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-white/3 px-3 py-2">
         <span className="min-w-0 truncate text-[11px] font-medium uppercase tracking-[0.16em] text-white">
           {language ?? 'text'}
         </span>

@@ -71,14 +71,26 @@ export const EditorPane = ({
         >
           {filePath}
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button className="w-full sm:w-auto" variant="outline" size="sm" type="button" onClick={onToggleBookmark}>
+        <div className="flex flex-nowrap items-center gap-2">
+          <Button
+            className="h-8 flex-1 px-2 text-[11px] sm:h-9 sm:flex-none sm:px-3 sm:text-xs"
+            variant="outline"
+            size="sm"
+            type="button"
+            onClick={onToggleBookmark}
+          >
             {isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
           </Button>
-          <Badge className="self-start sm:self-auto" variant={isDirty ? 'destructive' : 'success'}>
+          <Badge className="shrink-0 self-auto text-[10px] sm:text-xs" variant={isDirty ? 'destructive' : 'success'}>
             {isDirty ? 'Unsaved' : 'Saved'}
           </Badge>
-          <Button className="w-full sm:w-auto" type="button" size="sm" onClick={onSave} disabled={isSaving || !isDirty}>
+          <Button
+            className="h-8 flex-1 px-2 text-[11px] sm:h-9 sm:flex-none sm:px-3 sm:text-xs"
+            type="button"
+            size="sm"
+            onClick={onSave}
+            disabled={isSaving || !isDirty}
+          >
             {isSaving ? 'Saving...' : 'Save'}
           </Button>
         </div>

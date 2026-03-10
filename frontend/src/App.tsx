@@ -3,6 +3,7 @@ import {
   FilePenLineIcon,
   MenuIcon,
   MessageSquareIcon,
+  PlusIcon,
   TerminalSquareIcon,
   XIcon,
 } from 'lucide-react';
@@ -95,7 +96,6 @@ interface WorkbenchTab {
   readonly resourceId: string;
 }
 
-const VIEW_ORDER: readonly AppView[] = ['chat', 'terminal', 'editor'];
 const MOBILE_BREAKPOINT_MEDIA_QUERY = '(max-width: 720px)';
 const MIN_SWIPE_DISTANCE_PX = 48;
 const MAX_SWIPE_VERTICAL_DRIFT_PX = 72;
@@ -468,11 +468,11 @@ const App = () => {
   }, [activeWorkbenchTab, terminals]);
 
   const activeWorkbenchKind: WorkbenchTabKind | null = useMemo(() => {
-    if (activeWorkbenchTab) {
-      return activeWorkbenchTab.kind;
-    }
     if (activeView === 'chat') {
       return null;
+    }
+    if (activeWorkbenchTab) {
+      return activeWorkbenchTab.kind;
     }
     return activeView;
   }, [activeView, activeWorkbenchTab]);
@@ -1238,6 +1238,19 @@ const App = () => {
     void openEditorTab(targetPath);
   }, [activeWorkbenchTab, openEditorTab, selectedFilePath, workbenchTabs]);
 
+  const handleFocusTerminalWorkbench = useCallback(() => {
+    const activeTerminalTab = activeWorkbenchTab?.kind === 'terminal' ? activeWorkbenchTab : null;
+    const fallbackTerminalTab = [...workbenchTabs].reverse().find((tab) => tab.kind === 'terminal') ?? null;
+    const targetTerminalId = activeTerminalTab?.resourceId ?? fallbackTerminalTab?.resourceId ?? selectedTerminalId;
+    if (!targetTerminalId) {
+      setActiveView('terminal');
+      setIsMenuOpen(false);
+      return;
+    }
+    openTerminalTab(targetTerminalId);
+    setIsMenuOpen(false);
+  }, [activeWorkbenchTab, openTerminalTab, selectedTerminalId, workbenchTabs]);
+
   const openChatCreateDialog = useCallback(() => {
     setCreateMode('chat');
     setIsCreatePanelOpen(true);
@@ -1590,16 +1603,18 @@ const App = () => {
     if (!window.matchMedia(MOBILE_BREAKPOINT_MEDIA_QUERY).matches) {
       return;
     }
-    const currentIndex = VIEW_ORDER.indexOf(activeView);
-    if (currentIndex < 0) {
+    const isChatActive = activeView === 'chat';
+    if (direction === 'left' && isChatActive) {
+      if (activeWorkbenchKind === 'editor') {
+        handleFocusEditorWorkbench();
+        return;
+      }
+      handleFocusTerminalWorkbench();
       return;
     }
-    const offset = direction === 'left' ? 1 : -1;
-    const nextIndex = currentIndex + offset;
-    if (nextIndex < 0 || nextIndex >= VIEW_ORDER.length) {
-      return;
+    if (direction === 'right' && !isChatActive) {
+      switchView('chat');
     }
-    switchView(VIEW_ORDER[nextIndex]);
   };
 
   const handleMobileSwitcherTouchStart = (event: TouchEvent<HTMLElement>) => {
@@ -1641,10 +1656,13 @@ const App = () => {
     return cn(
       'flex w-full items-center gap-3 rounded-none px-2.5 py-2 text-left text-sm transition-colors',
       isSelected
-        ? 'bg-white/[0.14] text-white'
-        : 'text-[#f1f1f1] hover:bg-white/[0.06] hover:text-white',
+        ? 'bg-white/14 text-white'
+        : 'text-[#f1f1f1] hover:bg-white/6 hover:text-white',
     );
   };
+
+  const sidebarCreateButtonClassName =
+    'inline-flex size-6 shrink-0 items-center justify-center rounded-full text-[#d9d9d9] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30';
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#212121] text-[#ececec]">
@@ -1660,7 +1678,7 @@ const App = () => {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-base">New Session</CardTitle>
-                <div className="inline-flex rounded-md border border-white/10 bg-white/[0.03] p-1">
+                <div className="inline-flex rounded-md border border-white/10 bg-white/3 p-1">
                   <Button
                     variant={createMode === 'chat' ? 'default' : 'ghost'}
                     size="sm"
@@ -2017,7 +2035,7 @@ const App = () => {
         <div className="pointer-events-none absolute inset-x-0 top-0 z-30 h-20 bg-[linear-gradient(180deg,rgba(33,33,33,0.56)_0%,rgba(33,33,33,0.28)_45%,rgba(33,33,33,0)_100%)] md:hidden" />
         <button
           className={cn(
-            'fixed left-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-40 inline-flex size-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white backdrop-blur-md transition-[opacity,background-color,border-color] hover:border-white/20 hover:bg-white/[0.06] md:hidden',
+            'fixed left-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-40 inline-flex size-9 items-center justify-center rounded-full border border-white/10 bg-white/3 text-white backdrop-blur-md transition-[opacity,background-color,border-color] hover:border-white/20 hover:bg-white/6 md:hidden',
             isMenuOpen ? 'pointer-events-none opacity-0' : 'opacity-100',
           )}
           type="button"
@@ -2044,27 +2062,54 @@ const App = () => {
           <Card className="h-full min-h-0 rounded-none border-white/10 bg-[#181818]">
             <CardContent className="sidebar-scrollbar flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2 text-[#f1f1f1]">
               <div className="grid gap-1">
-                <button
-                  type="button"
-                  className={toSidebarRowClassName(false)}
-                  onClick={() => {
-                    openChatCreateDialog();
-                  }}
-                >
-                  <MessageSquareIcon className="size-4" />
-                  <span>新しいチャット</span>
-                </button>
-                <button
-                  type="button"
-                  className={toSidebarRowClassName(activeWorkbenchKind === 'terminal')}
-                  onClick={() => {
-                    openTerminalCreateDialog();
-                  }}
-                >
-                  <TerminalSquareIcon className="size-4" />
-                  <span>ターミナル</span>
-                  {isLoadingTerminals ? <span className="ml-auto text-[10px] text-[#c7c7c7]">読み込み中</span> : null}
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className={cn(toSidebarRowClassName(activeView === 'chat'), 'min-w-0 flex-1')}
+                    onClick={() => {
+                      switchView('chat');
+                      setIsMenuOpen(false);
+                    }}
+                  >
+                    <MessageSquareIcon className="size-4" />
+                    <span>チャット</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={sidebarCreateButtonClassName}
+                    aria-label="Create chat"
+                    onClick={() => {
+                      openChatCreateDialog();
+                    }}
+                  >
+                      <PlusIcon className="size-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className={cn(toSidebarRowClassName(activeWorkbenchKind === 'terminal'), 'min-w-0 flex-1')}
+                    onClick={() => {
+                      handleFocusTerminalWorkbench();
+                    }}
+                  >
+                    <TerminalSquareIcon className="size-4" />
+                    <span>ターミナル</span>
+                    <span className="ml-auto flex shrink-0 items-center gap-1">
+                    {isLoadingTerminals ? <span className="text-[10px] text-[#c7c7c7]">読み込み中</span> : null}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={sidebarCreateButtonClassName}
+                    aria-label="Create terminal"
+                    onClick={() => {
+                      openTerminalCreateDialog();
+                    }}
+                  >
+                      <PlusIcon className="size-3.5" />
+                  </button>
+                </div>
                 <button
                   type="button"
                   className={toSidebarRowClassName(activeWorkbenchKind === 'editor')}
@@ -2163,7 +2208,7 @@ const App = () => {
           {activeView !== 'chat' ? (
             <Card className="mx-2 mb-2 h-[calc(100%-0.5rem)] min-h-0 border-white/10 bg-[#171717] md:mx-0 md:mb-0 md:h-full">
               <CardContent className="grid h-full min-h-0 grid-rows-[auto_1fr] p-0">
-                <div className="flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-black/20 px-2 py-2">
+                <div className="flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-black/20 px-2 py-2 pl-14 md:pl-2">
                   {workbenchTabs.length === 0 ? (
                     <div className="px-2 py-1 text-xs text-[#8d8d8d]">
                       Open a file from the directory tree or create a terminal tab.
@@ -2186,8 +2231,8 @@ const App = () => {
                         className={cn(
                           'group inline-flex max-w-[14rem] items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors sm:max-w-72',
                           isActive
-                            ? 'border-white/30 bg-white/[0.12] text-white'
-                            : 'border-white/10 bg-white/[0.03] text-[#cfcfcf] hover:bg-white/[0.08]',
+                            ? 'border-white/30 bg-white/12 text-white'
+                            : 'border-white/10 bg-white/3 text-[#cfcfcf] hover:bg-white/8',
                         )}
                         onClick={() => {
                           activateWorkbenchTab(tab);

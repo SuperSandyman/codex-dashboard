@@ -14,13 +14,10 @@ import {
 } from '@assistant-ui/react';
 import {
   ArrowUpIcon,
-  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CopyIcon,
   EllipsisIcon,
   PencilIcon,
-  RefreshCwIcon,
   SquareIcon,
 } from 'lucide-react';
 
@@ -220,10 +217,10 @@ const messageMarkdownClassName = [
   'prose-pre:my-2 prose-pre:bg-transparent prose-pre:p-0',
   '[&_pre_code]:bg-transparent [&_pre_code]:px-0 [&_pre_code]:py-0 [&_pre_code]:text-inherit [&_pre_code]:rounded-none',
   'prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6',
-  'prose-blockquote:my-3 prose-blockquote:rounded-r-lg prose-blockquote:border-l-white/25 prose-blockquote:bg-white/[0.03] prose-blockquote:py-1 prose-blockquote:pl-4 prose-blockquote:text-white',
+  'prose-blockquote:my-3 prose-blockquote:rounded-r-lg prose-blockquote:border-l-white/25 prose-blockquote:bg-white/3 prose-blockquote:py-1 prose-blockquote:pl-4 prose-blockquote:text-white',
   'prose-hr:border-white/10 prose-img:my-2 prose-img:rounded-xl',
   'prose-table:my-2 prose-table:w-full prose-thead:border-white/10 prose-tbody:divide-y prose-tbody:divide-white/10',
-  'prose-th:border-white/10 prose-th:bg-white/[0.04] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-white',
+  'prose-th:border-white/10 prose-th:bg-white/4 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-white',
   'prose-td:border-white/10 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:text-white',
 ].join(' ');
 
@@ -338,29 +335,6 @@ const AssistantMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string)
 
         <div className="flex pt-2">
           <BranchPicker />
-
-          <ActionBarPrimitive.Root
-            hideWhenRunning
-            autohide="not-last"
-            autohideFloat="single-branch"
-            className="flex items-center gap-1 rounded-lg data-floating:absolute data-floating:border data-floating:border-white/15 data-floating:bg-[#212121] data-floating:p-1"
-          >
-            <ActionBarPrimitive.Reload asChild>
-              <IconButton tooltip="Reload">
-                <RefreshCwIcon className="size-3.5" />
-              </IconButton>
-            </ActionBarPrimitive.Reload>
-            <ActionBarPrimitive.Copy asChild>
-              <IconButton tooltip="Copy">
-                <AuiIf condition={(state) => state.message.isCopied}>
-                  <CheckIcon className="size-3.5" />
-                </AuiIf>
-                <AuiIf condition={(state) => !state.message.isCopied}>
-                  <CopyIcon className="size-3.5" />
-                </AuiIf>
-              </IconButton>
-            </ActionBarPrimitive.Copy>
-          </ActionBarPrimitive.Root>
         </div>
       </div>
     </MessagePrimitive.Root>
@@ -370,7 +344,7 @@ const AssistantMessage = ({ onOpenFile }: { readonly onOpenFile?: (path: string)
 const SystemMessage = () => {
   return (
     <MessagePrimitive.Root className="mx-auto w-full max-w-3xl px-0.5 sm:px-0">
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white">
+      <div className="rounded-xl border border-white/10 bg-white/3 px-3 py-2 text-xs text-white">
         <MessagePrimitive.Parts />
       </div>
     </MessagePrimitive.Root>
@@ -487,13 +461,13 @@ const Composer = ({
   };
 
   return (
-    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-none items-end gap-1 border-t border-white/10 bg-[#212121]/98 px-3 py-2 sm:max-w-3xl sm:rounded-3xl sm:border-none sm:bg-white/5 sm:p-2 sm:pl-2 sm:pr-1 sm:py-1">
-      <div className="relative" ref={settingsPanelRef}>
+    <ComposerPrimitive.Root className="mx-auto flex w-full max-w-none items-end gap-2 border-t border-white/10 bg-[#212121]/98 px-3 py-2 sm:max-w-3xl sm:rounded-3xl sm:border-none sm:bg-white/5 sm:p-2">
+      <div className="relative shrink-0 self-end" ref={settingsPanelRef}>
         <button
           type="button"
           title="Chat settings"
           disabled={!launchOptions}
-          className="inline-flex size-9 items-center justify-center rounded-full bg-white/[0.08] text-[#d8d8d8] transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40 sm:size-8"
+          className="inline-flex size-10 items-center justify-center rounded-full bg-white/8 text-[#d8d8d8] transition-colors hover:bg-white/14 disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => {
             setIsSettingsOpen((prev) => !prev);
           }}
@@ -591,16 +565,16 @@ const Composer = ({
       </div>
       <ComposerPrimitive.Input
         placeholder="Message Codex"
-        className="h-11 max-h-32 min-h-11 grow resize-none bg-transparent px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/50"
+        className="min-h-10 max-h-32 grow resize-none bg-transparent px-3 py-2.5 text-sm leading-5 text-white outline-none placeholder:text-white/50"
       />
-      <div className="flex items-center justify-end gap-2 sm:mb-2 sm:mr-1">
+      <div className="flex shrink-0 items-center justify-end gap-2 self-end">
         <AuiIf condition={(state) => !state.thread.isRunning}>
-          <ComposerPrimitive.Send className="flex h-9 min-w-9 items-center justify-center rounded-full bg-white px-3 transition-opacity disabled:opacity-10 sm:size-8 sm:px-0">
+          <ComposerPrimitive.Send className="flex size-10 items-center justify-center rounded-full bg-white transition-opacity disabled:opacity-10">
             <ArrowUpIcon className="size-4 text-black" />
           </ComposerPrimitive.Send>
         </AuiIf>
         <AuiIf condition={(state) => state.thread.isRunning}>
-          <ComposerPrimitive.Cancel className="flex h-9 min-w-9 items-center justify-center rounded-full bg-white px-3 sm:size-8 sm:px-0">
+          <ComposerPrimitive.Cancel className="flex size-10 items-center justify-center rounded-full bg-white">
             <SquareIcon className="size-2.5 fill-black text-black" />
           </ComposerPrimitive.Cancel>
         </AuiIf>
@@ -654,15 +628,16 @@ export const AssistantThread = ({
             </div>
           </AuiIf>
 
-          <ThreadPrimitive.Messages
-            className="flex flex-col gap-6 sm:gap-8"
-            components={{
-              UserMessage: () => <UserMessage onOpenFile={onOpenFile} />,
-              EditComposer,
-              AssistantMessage: () => <AssistantMessage onOpenFile={onOpenFile} />,
-              SystemMessage,
-            }}
-          />
+          <div className="flex flex-col gap-6 sm:gap-8">
+            <ThreadPrimitive.Messages
+              components={{
+                UserMessage: () => <UserMessage onOpenFile={onOpenFile} />,
+                EditComposer,
+                AssistantMessage: () => <AssistantMessage onOpenFile={onOpenFile} />,
+                SystemMessage,
+              }}
+            />
+          </div>
 
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-[#212121]/95 px-0 pb-[env(safe-area-inset-bottom)] pt-0 backdrop-blur sm:px-4 sm:pb-2 sm:pt-2">
             <ThreadPrimitive.ScrollToBottom asChild>
