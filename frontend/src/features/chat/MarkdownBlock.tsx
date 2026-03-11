@@ -1,314 +1,343 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import {
+  isValidElement,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
+
+import type { Components, ExtraProps } from 'react-markdown';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+import { Button } from '../../components/ui/button';
 
 interface MarkdownBlockProps {
   readonly text: string;
+  readonly onOpenFile?: (path: string) => void;
 }
 
-interface InlineTokenText {
-  readonly type: 'text';
-  readonly value: string;
+interface CodeElementProps {
+  readonly className?: string;
+  readonly children?: ReactNode;
 }
 
-interface InlineTokenCode {
-  readonly type: 'code';
-  readonly value: string;
+interface MarkdownAstNode {
+  readonly type: string;
+  value?: string;
+  url?: string;
+  children?: MarkdownAstNode[];
 }
 
-interface InlineTokenStrong {
-  readonly type: 'strong';
-  readonly value: string;
+interface MarkdownParentNode extends MarkdownAstNode {
+  children: MarkdownAstNode[];
 }
-
-interface InlineTokenLink {
-  readonly type: 'link';
-  readonly label: string;
-  readonly href: string;
-}
-
-type InlineToken = InlineTokenText | InlineTokenCode | InlineTokenStrong | InlineTokenLink;
-
-const tokenizeInline = (text: string): InlineToken[] => {
-  const tokens: InlineToken[] = [];
-  let cursor = 0;
-
-  while (cursor < text.length) {
-    const remain = text.slice(cursor);
-
-    const linkMatch = remain.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/);
-    if (linkMatch) {
-      tokens.push({
-        type: 'link',
-        label: linkMatch[1],
-        href: linkMatch[2],
-      });
-      cursor += linkMatch[0].length;
-      continue;
-    }
-
-    const codeMatch = remain.match(/^`([^`]+)`/);
-    if (codeMatch) {
-      tokens.push({
-        type: 'code',
-        value: codeMatch[1],
-      });
-      cursor += codeMatch[0].length;
-      continue;
-    }
-
-    const strongMatch = remain.match(/^\*\*([^*]+)\*\*/);
-    if (strongMatch) {
-      tokens.push({
-        type: 'strong',
-        value: strongMatch[1],
-      });
-      cursor += strongMatch[0].length;
-      continue;
-    }
-
-    const nextSpecial = remain.search(/(\[|`|\*\*)/);
-    if (nextSpecial <= 0) {
-      tokens.push({ type: 'text', value: remain });
-      break;
-    }
-    tokens.push({ type: 'text', value: remain.slice(0, nextSpecial) });
-    cursor += nextSpecial;
-  }
-
-  return tokens;
-};
-
-const renderInline = (text: string, keyPrefix: string): ReactNode[] => {
-  const lines = text.split('\n');
-  const rendered: ReactNode[] = [];
-
-  lines.forEach((line, lineIndex) => {
-    const tokens = tokenizeInline(line);
-    tokens.forEach((token, tokenIndex) => {
-      const key = `${keyPrefix}-${lineIndex}-${tokenIndex}`;
-      if (token.type === 'code') {
-        rendered.push(
-          <code key={key} className="md-inline-code">
-            {token.value}
-          </code>,
-        );
-        return;
-      }
-      if (token.type === 'strong') {
-        rendered.push(<strong key={key}>{token.value}</strong>);
-        return;
-      }
-      if (token.type === 'link') {
-        rendered.push(
-          <a
-            key={key}
-            href={token.href}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="md-link"
-          >
-            {token.label}
-          </a>,
-        );
-        return;
-      }
-      rendered.push(<span key={key}>{token.value}</span>);
-    });
-
-    if (lineIndex < lines.length - 1) {
-      rendered.push(<br key={`${keyPrefix}-br-${lineIndex}`} />);
-    }
-  });
-
-  return rendered;
-};
-
-const parseFenceBlock = (
-  lines: string[],
-  startIndex: number,
-): { readonly endIndex: number; readonly lang: string; readonly code: string } => {
-  const startLine = lines[startIndex];
-  const lang = startLine.replace(/^```/, '').trim();
-  const body: string[] = [];
-  let index = startIndex + 1;
-
-  while (index < lines.length) {
-    if (lines[index].startsWith('```')) {
-      return {
-        endIndex: index,
-        lang,
-        code: body.join('\n'),
-      };
-    }
-    body.push(lines[index]);
-    index += 1;
-  }
-
-  return {
-    endIndex: lines.length - 1,
-    lang,
-    code: body.join('\n'),
-  };
-};
 
 type CopyState = 'idle' | 'copied' | 'failed';
 
-/**
- * チャット本文向けの軽量 Markdown レンダラ。
- * - 見出し
- * - 箇条書き
- * - 引用
- * - コードフェンス / インラインコード
- * - 強調 / リンク
- * @param props MarkdownBlock プロパティ
- */
-export const MarkdownBlock = ({ text }: MarkdownBlockProps) => {
-  const lines = text.split('\n');
-  const blocks: ReactNode[] = [];
-  const [copyStateByBlock, setCopyStateByBlock] = useState<Record<string, CopyState>>({});
-  let index = 0;
+const FILE_PATH_CANDIDATE_PATTERN =
+  /(?:\/|\.\/|\.\.\/)[^\s<>()`'"]+\.[A-Za-z0-9][^\s<>()`'"]*(?:#L\d+(?:C\d+)?)?(?::\d+(?::\d+)?)?/g;
+
+const trimPunctuationSuffix = (value: string): { readonly text: string; readonly suffix: string } => {
+  const trimmed = value.replace(/[.,;!?]+$/, '');
+  return {
+    text: trimmed,
+    suffix: value.slice(trimmed.length),
+  };
+};
+
+const isParentNode = (node: MarkdownAstNode): node is MarkdownParentNode => {
+  return Array.isArray(node.children);
+};
+
+const createTextNode = (value: string): MarkdownAstNode => {
+  return {
+    type: 'text',
+    value,
+  };
+};
+
+const createFileLinkNode = (path: string): MarkdownAstNode => {
+  return {
+    type: 'link',
+    url: path,
+    children: [createTextNode(path)],
+  };
+};
+
+const toPlainText = (value: ReactNode): string => {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => toPlainText(entry)).join('');
+  }
+
+  if (isValidElement<{ readonly children?: ReactNode }>(value)) {
+    return toPlainText(value.props.children);
+  }
+
+  return '';
+};
+
+const getCodeElement = (value: ReactNode): ReactElement<CodeElementProps> | null => {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const match = getCodeElement(entry);
+      if (match) {
+        return match;
+      }
+    }
+
+    return null;
+  }
+
+  if (!isValidElement<CodeElementProps>(value) || value.type !== 'code') {
+    return null;
+  }
+
+  return value;
+};
+
+const getCodeLanguage = (className: string | undefined): string | null => {
+  if (!className) {
+    return null;
+  }
+
+  const match = className.match(/(?:^|\s)language-([A-Za-z0-9_+-]+)(?:\s|$)/);
+  return match?.[1] ?? null;
+};
+
+const isExternalHref = (href: string | undefined): boolean => {
+  if (!href) {
+    return false;
+  }
+
+  return /^https?:\/\//.test(href);
+};
+
+const buildFileLinkNodes = (text: string): MarkdownAstNode[] => {
+  const nodes: MarkdownAstNode[] = [];
+  let cursor = 0;
+
+  for (const match of text.matchAll(FILE_PATH_CANDIDATE_PATTERN)) {
+    const fullMatch = match[0];
+    const start = match.index;
+
+    if (start === undefined || fullMatch.length === 0) {
+      continue;
+    }
+
+    if (start > cursor) {
+      nodes.push(createTextNode(text.slice(cursor, start)));
+    }
+
+    const { text: filePath, suffix } = trimPunctuationSuffix(fullMatch);
+    if (filePath) {
+      nodes.push(createFileLinkNode(filePath));
+    } else {
+      nodes.push(createTextNode(fullMatch));
+    }
+
+    if (suffix) {
+      nodes.push(createTextNode(suffix));
+    }
+
+    cursor = start + fullMatch.length;
+  }
+
+  if (cursor < text.length) {
+    nodes.push(createTextNode(text.slice(cursor)));
+  }
+
+  return nodes.length > 0 ? nodes : [createTextNode(text)];
+};
+
+const replaceTextNodesWithFileLinks = (node: MarkdownAstNode): void => {
+  if (!isParentNode(node)) {
+    return;
+  }
+
+  for (let index = 0; index < node.children.length; index += 1) {
+    const child = node.children[index];
+
+    if (child.type === 'text' && typeof child.value === 'string' && child.value.length > 0) {
+      const nextNodes = buildFileLinkNodes(child.value);
+      const didChange = nextNodes.length !== 1 || nextNodes[0]?.value !== child.value;
+
+      if (didChange) {
+        node.children.splice(index, 1, ...nextNodes);
+        index += nextNodes.length - 1;
+        continue;
+      }
+    }
+
+    if (child.type === 'link' || child.type === 'inlineCode' || child.type === 'code') {
+      continue;
+    }
+
+    replaceTextNodesWithFileLinks(child);
+  }
+};
+
+const remarkFilePathLinks = () => {
+  return (tree: MarkdownAstNode) => {
+    replaceTextNodesWithFileLinks(tree);
+  };
+};
+
+interface MarkdownCodeBlockProps {
+  readonly code: string;
+  readonly language: string | null;
+}
+
+const MarkdownCodeBlock = ({ code, language }: MarkdownCodeBlockProps) => {
+  const [copyState, setCopyState] = useState<CopyState>('idle');
 
   useEffect(() => {
-    if (Object.keys(copyStateByBlock).length === 0) {
+    if (copyState === 'idle') {
       return undefined;
     }
+
     const timer = window.setTimeout(() => {
-      setCopyStateByBlock({});
+      setCopyState('idle');
     }, 1800);
+
     return () => {
       window.clearTimeout(timer);
     };
-  }, [copyStateByBlock]);
+  }, [copyState]);
 
-  const handleCopyFence = async (blockKey: string, code: string) => {
+  const handleCopy = async () => {
     if (!window.isSecureContext || !navigator.clipboard) {
-      setCopyStateByBlock((prev) => ({ ...prev, [blockKey]: 'failed' }));
+      setCopyState('failed');
       return;
     }
+
     try {
       await navigator.clipboard.writeText(code);
-      setCopyStateByBlock((prev) => ({ ...prev, [blockKey]: 'copied' }));
+      setCopyState('copied');
     } catch {
-      setCopyStateByBlock((prev) => ({ ...prev, [blockKey]: 'failed' }));
+      setCopyState('failed');
     }
   };
 
-  while (index < lines.length) {
-    const line = lines[index];
+  const buttonLabel =
+    copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy';
+  const normalizedCode = code.replace(/\n$/, '');
 
-    if (line.trim().length === 0) {
-      index += 1;
-      continue;
-    }
+  return (
+    <div className="my-2 overflow-hidden rounded-xl border border-white/10 bg-black/30">
+      <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-white/3 px-3 py-2">
+        <span className="min-w-0 truncate text-[11px] font-medium uppercase tracking-[0.16em] text-white">
+          {language ?? 'text'}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-[11px] text-white hover:bg-white/10 hover:text-white"
+          onClick={() => {
+            void handleCopy();
+          }}
+          aria-label="Copy code block"
+        >
+          {buttonLabel}
+        </Button>
+      </div>
+      <pre className="max-w-full overflow-x-auto px-5 py-3 text-[13px] leading-6 text-white">
+        <code className="block whitespace-pre-wrap break-words [overflow-wrap:anywhere]" data-lang={language ?? undefined}>
+          {normalizedCode}
+        </code>
+      </pre>
+    </div>
+  );
+};
 
-    if (line.startsWith('```')) {
-      const fence = parseFenceBlock(lines, index);
-      const blockKey = `code-${index}`;
-      const copyState = copyStateByBlock[blockKey] ?? 'idle';
-      const buttonLabel =
-        copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy';
-      blocks.push(
-        <div key={blockKey} className="md-code-block">
-          <div className="md-code-toolbar">
-            <span className="md-code-lang">{fence.lang || 'text'}</span>
-            <button
-              type="button"
-              className="button button-secondary md-code-copy"
-              onClick={() => {
-                void handleCopyFence(blockKey, fence.code);
-              }}
-              aria-label="Copy code block"
-            >
-              {buttonLabel}
-            </button>
-          </div>
-          <pre className="md-code-content">
-            <code data-lang={fence.lang || undefined}>{fence.code}</code>
-          </pre>
-        </div>,
-      );
-      index = fence.endIndex + 1;
-      continue;
-    }
+const MarkdownPre = ({ children }: ComponentPropsWithoutRef<'pre'> & ExtraProps) => {
+  const codeElement = getCodeElement(children);
 
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      const level = heading[1].length;
-      const className = `md-heading md-h${level}`;
-      blocks.push(
-        <p key={`h-${index}`} className={className}>
-          {renderInline(heading[2], `h-${index}`)}
-        </p>,
-      );
-      index += 1;
-      continue;
-    }
-
-    if (/^>\s?/.test(line)) {
-      const quoteLines: string[] = [];
-      while (index < lines.length && /^>\s?/.test(lines[index])) {
-        quoteLines.push(lines[index].replace(/^>\s?/, ''));
-        index += 1;
-      }
-      blocks.push(
-        <blockquote key={`q-${index}`} className="md-quote">
-          {renderInline(quoteLines.join('\n'), `q-${index}`)}
-        </blockquote>,
-      );
-      continue;
-    }
-
-    if (/^[-*+]\s+/.test(line)) {
-      const items: string[] = [];
-      while (index < lines.length && /^[-*+]\s+/.test(lines[index])) {
-        items.push(lines[index].replace(/^[-*+]\s+/, ''));
-        index += 1;
-      }
-      blocks.push(
-        <ul key={`ul-${index}`} className="md-list">
-          {items.map((item, itemIndex) => (
-            <li key={`ul-item-${index}-${itemIndex}`}>{renderInline(item, `ul-${index}-${itemIndex}`)}</li>
-          ))}
-        </ul>,
-      );
-      continue;
-    }
-
-    if (/^\d+\.\s+/.test(line)) {
-      const items: string[] = [];
-      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
-        items.push(lines[index].replace(/^\d+\.\s+/, ''));
-        index += 1;
-      }
-      blocks.push(
-        <ol key={`ol-${index}`} className="md-list">
-          {items.map((item, itemIndex) => (
-            <li key={`ol-item-${index}-${itemIndex}`}>{renderInline(item, `ol-${index}-${itemIndex}`)}</li>
-          ))}
-        </ol>,
-      );
-      continue;
-    }
-
-    const paragraphLines: string[] = [];
-    while (
-      index < lines.length &&
-      lines[index].trim().length > 0 &&
-      !lines[index].startsWith('```') &&
-      !/^(#{1,6})\s+/.test(lines[index]) &&
-      !/^>\s?/.test(lines[index]) &&
-      !/^[-*+]\s+/.test(lines[index]) &&
-      !/^\d+\.\s+/.test(lines[index])
-    ) {
-      paragraphLines.push(lines[index]);
-      index += 1;
-    }
-
-    blocks.push(
-      <p key={`p-${index}`} className="md-paragraph">
-        {renderInline(paragraphLines.join('\n'), `p-${index}`)}
-      </p>,
-    );
+  if (!codeElement) {
+    return <pre>{children}</pre>;
   }
 
-  return <div className="markdown-block">{blocks}</div>;
+  return (
+    <MarkdownCodeBlock
+      code={toPlainText(codeElement.props.children)}
+      language={getCodeLanguage(codeElement.props.className)}
+    />
+  );
+};
+
+interface MarkdownLinkProps extends ComponentPropsWithoutRef<'a'>, ExtraProps {
+  readonly onOpenFile?: (path: string) => void;
+}
+
+const MarkdownLink = ({ href, children, onOpenFile, ...props }: MarkdownLinkProps) => {
+  const external = isExternalHref(href);
+  const isFileLink = Boolean(onOpenFile) && !external && typeof href === 'string' && href.length > 0;
+
+  return (
+    <a
+      {...props}
+      href={href}
+      className="font-medium text-[#d9d9d9] underline decoration-white/25 underline-offset-4 transition-colors hover:text-white"
+      target={external ? '_blank' : undefined}
+      rel={external ? 'noreferrer noopener' : undefined}
+      onClick={(event) => {
+        if (!isFileLink || !href || !onOpenFile) {
+          return;
+        }
+
+        event.preventDefault();
+        onOpenFile(href);
+      }}
+    >
+      {children}
+    </a>
+  );
+};
+
+const MarkdownTable = ({ children }: ComponentPropsWithoutRef<'table'> & ExtraProps) => {
+  return (
+    <div className="my-2 overflow-x-auto rounded-xl border border-white/10 bg-black/20">
+      <table className="min-w-full border-collapse text-sm">{children}</table>
+    </div>
+  );
+};
+
+const MarkdownImage = ({ alt, ...props }: ComponentPropsWithoutRef<'img'> & ExtraProps) => {
+  return <img {...props} alt={alt ?? ''} className="my-2 max-w-full rounded-xl border border-white/10" loading="lazy" />;
+};
+
+/**
+ * チャット本文向けの Markdown レンダラ。
+ * GFM とファイルパスリンク化に対応し、横に崩れやすいコードブロックや表を安全に表示する。
+ * @param props MarkdownBlock プロパティ
+ * @returns 整形済み Markdown 表示
+ */
+export const MarkdownBlock = ({ text, onOpenFile }: MarkdownBlockProps) => {
+  const components = useMemo<Components>(() => {
+    return {
+      a: (props) => <MarkdownLink {...props} onOpenFile={onOpenFile} />,
+      img: MarkdownImage,
+      pre: MarkdownPre,
+      table: MarkdownTable,
+    };
+  }, [onOpenFile]);
+
+  const remarkPlugins = useMemo(() => {
+    return onOpenFile ? [remarkGfm, remarkFilePathLinks] : [remarkGfm];
+  }, [onOpenFile]);
+
+  return (
+    <div className="min-w-0">
+      <ReactMarkdown components={components} remarkPlugins={remarkPlugins} skipHtml>
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
 };
