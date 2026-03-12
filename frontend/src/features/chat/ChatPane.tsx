@@ -164,9 +164,11 @@ export const ChatPane = (props: ChatPaneProps) => {
                 </div>
                 {request.reason ? <p className="text-white">{request.reason}</p> : null}
                 {request.command ? (
-                  <pre className="max-h-40 overflow-auto rounded-md border border-white/10 bg-black/25 p-2 text-xs text-[#d4d4d4]">
-                    <code>{request.command}</code>
-                  </pre>
+                  <div className="rounded-md border border-white/10 bg-black/25 px-3.5 py-3">
+                    <pre className="m-0 max-h-40 overflow-auto text-xs text-[#d4d4d4]">
+                      <code>{request.command}</code>
+                    </pre>
+                  </div>
                 ) : null}
                 {request.cwd ? <div className="text-xs text-[#d8d8d8]">cwd: {request.cwd}</div> : null}
                 {request.grantRoot ? <div className="text-xs text-[#d8d8d8]">grantRoot: {request.grantRoot}</div> : null}

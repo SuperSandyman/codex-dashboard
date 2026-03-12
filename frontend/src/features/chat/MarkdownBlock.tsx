@@ -230,8 +230,8 @@ const MarkdownCodeBlock = ({ code, language }: MarkdownCodeBlockProps) => {
   const normalizedCode = code.replace(/\n$/, '');
 
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-white/10 bg-black/30">
-      <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-white/3 px-3 py-2">
+    <div className="my-3 overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+      <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-white/3 px-3 py-2 sm:px-4">
         <span className="min-w-0 truncate text-[11px] font-medium uppercase tracking-[0.16em] text-white">
           {language ?? 'text'}
         </span>
@@ -248,11 +248,16 @@ const MarkdownCodeBlock = ({ code, language }: MarkdownCodeBlockProps) => {
           {buttonLabel}
         </Button>
       </div>
-      <pre className="max-w-full overflow-x-auto px-5 py-3 text-[13px] leading-6 text-white">
-        <code className="block whitespace-pre-wrap break-words [overflow-wrap:anywhere]" data-lang={language ?? undefined}>
-          {normalizedCode}
-        </code>
-      </pre>
+      <div className="px-4 py-4 sm:px-5">
+        <pre className="m-0 max-w-full overflow-x-auto text-[13px] leading-6 text-white">
+          <code
+            className="block min-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+            data-lang={language ?? undefined}
+          >
+            {normalizedCode}
+          </code>
+        </pre>
+      </div>
     </div>
   );
 };
