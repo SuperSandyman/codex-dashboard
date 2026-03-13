@@ -16,6 +16,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { AssistantThread } from './AssistantThread';
+import { CodePanel } from './CodePanel';
 
 interface ChatPaneProps {
   readonly chatId: string | null;
@@ -164,9 +165,9 @@ export const ChatPane = (props: ChatPaneProps) => {
                 </div>
                 {request.reason ? <p className="text-white">{request.reason}</p> : null}
                 {request.command ? (
-                  <pre className="max-h-40 overflow-auto rounded-md border border-white/10 bg-black/25 p-2 text-xs text-[#d4d4d4]">
-                    <code>{request.command}</code>
-                  </pre>
+                  <CodePanel contentClassName="max-h-40 text-xs">
+                    {request.command}
+                  </CodePanel>
                 ) : null}
                 {request.cwd ? <div className="text-xs text-[#d8d8d8]">cwd: {request.cwd}</div> : null}
                 {request.grantRoot ? <div className="text-xs text-[#d8d8d8]">grantRoot: {request.grantRoot}</div> : null}

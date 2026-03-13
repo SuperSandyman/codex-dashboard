@@ -76,7 +76,8 @@ PORTLESS_BASE="<base>" portless "<base>-web" pnpm -C frontend dev
 - Frontend: `http://localhost:4873`
 - Server API: `http://localhost:4877`
 - Vite proxies `/api` and `/ws` to the server.
-- Frontend dev port uses `PORT` env when provided (fallback: `4873`).
+- Frontend dev host uses `FRONTEND_HOST` when provided (fallback: `127.0.0.1`).
+- Frontend dev port uses `FRONTEND_PORT` when provided (fallback: `4873`).
 - When `PORTLESS_BASE` is set, Vite proxies `/api` and `/ws` to `http(s)://<PORTLESS_BASE>-api.localhost:1355`.
 
 Run separately:
