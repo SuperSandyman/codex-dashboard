@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import { Button } from '../../components/ui/button';
+import { CodePanel } from './CodePanel';
 
 interface CommandExecutionBlockProps {
   readonly command: string;
@@ -87,7 +88,12 @@ export const CommandExecutionBlock = ({ command, output, exitCode, status }: Com
     <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3 text-sm">
       <div className="grid gap-1">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">Command</div>
-        <code className="overflow-auto rounded-md border border-border/60 bg-background/60 px-3.5 py-2 text-xs">{command}</code>
+        <CodePanel
+          className="border-border/60 bg-background/60 py-2"
+          contentClassName="max-h-40 text-inherit text-xs"
+        >
+          {command}
+        </CodePanel>
       </div>
 
       <div className="flex items-center gap-2 text-xs">
@@ -116,11 +122,9 @@ export const CommandExecutionBlock = ({ command, output, exitCode, status }: Com
             {outputLineCount > 1 ? ` (${outputLineCount} lines)` : ''}
           </p>
         ) : (
-          <div className="rounded-md border border-border/60 bg-background/80 px-3.5 py-3">
-            <pre className="m-0 max-h-72 overflow-auto text-xs">
-              <code>{output || '(empty)'}</code>
-            </pre>
-          </div>
+          <CodePanel className="border-border/60 bg-background/80" contentClassName="max-h-72 text-xs">
+            {output || '(empty)'}
+          </CodePanel>
         )}
       </div>
     </div>

@@ -23,6 +23,12 @@ interface ThreadMessageProps {
   readonly onOpenFile?: (path: string) => void;
 }
 
+interface MessageMarkdownProps {
+  readonly text: string;
+  readonly onOpenFile?: (path: string) => void;
+  readonly className?: string;
+}
+
 const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   ({ className, children, tooltip, ...props }, ref) => {
     return (
@@ -59,17 +65,9 @@ const messageMarkdownClassName = [
   'prose-td:border-white/10 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:text-white',
 ].join(' ');
 
-const UserText = ({ text, onOpenFile }: { readonly text: string; readonly onOpenFile?: (path: string) => void }) => {
+const MessageMarkdown = ({ text, onOpenFile, className }: MessageMarkdownProps) => {
   return (
-    <div className={messageMarkdownClassName}>
-      <MarkdownBlock text={text} onOpenFile={onOpenFile} />
-    </div>
-  );
-};
-
-const AssistantText = ({ text, onOpenFile }: { readonly text: string; readonly onOpenFile?: (path: string) => void }) => {
-  return (
-    <div className={messageMarkdownClassName}>
+    <div className={cn(messageMarkdownClassName, className)}>
       <MarkdownBlock text={text} onOpenFile={onOpenFile} />
     </div>
   );
@@ -81,9 +79,7 @@ const AssistantReasoning = ({ text, onOpenFile }: { readonly text: string; reado
       <summary className="cursor-pointer text-[11px] text-white">
         <strong>Reasoning</strong>
       </summary>
-      <div className={cn('mt-1 text-white', messageMarkdownClassName)}>
-        <MarkdownBlock text={text} onOpenFile={onOpenFile} />
-      </div>
+      <MessageMarkdown text={text} onOpenFile={onOpenFile} className="mt-1 text-white" />
     </details>
   );
 };
@@ -120,7 +116,7 @@ export const UserMessage = ({ onOpenFile }: ThreadMessageProps) => {
         <div className="min-w-0 rounded-3xl bg-white/5 px-4 py-2 text-left text-[#f5f5f5] sm:py-1.5">
           <MessagePrimitive.Parts
             components={{
-              Text: (props) => <UserText {...props} onOpenFile={onOpenFile} />,
+              Text: (props) => <MessageMarkdown {...props} onOpenFile={onOpenFile} />,
             }}
           />
         </div>
@@ -153,7 +149,7 @@ export const AssistantMessage = ({ onOpenFile }: ThreadMessageProps) => {
         <div className="text-white">
           <MessagePrimitive.Parts
             components={{
-              Text: (props) => <AssistantText {...props} onOpenFile={onOpenFile} />,
+              Text: (props) => <MessageMarkdown {...props} onOpenFile={onOpenFile} />,
               Reasoning: (props) => <AssistantReasoning {...props} onOpenFile={onOpenFile} />,
             }}
           />
