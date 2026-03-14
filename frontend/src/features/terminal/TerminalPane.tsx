@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { FitAddon } from '@xterm/addon-fit';
-import { Terminal } from '@xterm/xterm';
-import '@xterm/xterm/css/xterm.css';
-
 import type { TerminalStatus } from '../../api/terminals';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { createGhosttyTerminalSession } from './ghosttyTerminal';
 import { parseTerminalStreamEvent, type TerminalStreamEvent } from './protocol';
 
 interface TerminalPaneProps {
@@ -28,7 +25,7 @@ const buildTerminalWsUrl = (terminalId: string): string => {
 };
 
 /**
- * xterm.js ベースの Operations Terminal ペイン。
+ * ghostty-web ベースの Operations Terminal ペイン。
  * @param props TerminalPane プロパティ
  */
 export const TerminalPane = ({
@@ -40,12 +37,12 @@ export const TerminalPane = ({
   isKillDisabled,
 }: TerminalPaneProps) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const terminalSessionRef = useRef<Awaited<ReturnType<typeof createGhosttyTerminalSession>> | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [commandDraft, setCommandDraft] = useState('');
   const [reconnectToken, setReconnectToken] = useState(0);
+  const [isTerminalReady, setIsTerminalReady] = useState(false);
 
   const isReady = useMemo(() => {
     return connectionState === 'connected';
@@ -63,54 +60,66 @@ export const TerminalPane = ({
     [],
   );
 
+  const sendResizePayload = useCallback(() => {
+    const session = terminalSessionRef.current;
+    if (!session) {
+      return;
+    }
+    sendPayload({ type: 'resize', cols: session.terminal.cols, rows: session.terminal.rows });
+  }, [sendPayload]);
+
   useEffect(() => {
-    if (!mountRef.current || terminalRef.current) {
+    if (!mountRef.current || terminalSessionRef.current) {
       return undefined;
     }
 
-    const term = new Terminal({
-      cursorBlink: true,
-      convertEol: true,
-      fontFamily:
-        '\'Hack Nerd Font Mono\', \'Hack Nerd Mono\', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace',
-      fontSize: 13,
-      lineHeight: 1.25,
-      theme: {
-        background: '#09090b',
+    const container = mountRef.current;
+    let isDisposed = false;
+
+    void createGhosttyTerminalSession({
+      container,
+      onData: (data) => {
+        sendPayload({ type: 'input', data });
       },
-    });
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(mountRef.current);
-    fitAddon.fit();
-
-    const dataDisposable = term.onData((data) => {
-      sendPayload({ type: 'input', data });
-    });
-
-    terminalRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      sendPayload({ type: 'resize', cols: term.cols, rows: term.rows });
-    });
-    resizeObserver.observe(mountRef.current);
+      onResize: ({ cols, rows }) => {
+        sendPayload({ type: 'resize', cols, rows });
+      },
+    })
+      .then((session) => {
+        if (isDisposed) {
+          session.dispose();
+          return;
+        }
+        terminalSessionRef.current = session;
+        setIsTerminalReady(true);
+      })
+      .catch((error: unknown) => {
+        if (isDisposed) {
+          return;
+        }
+        console.error('Failed to initialize ghostty-web terminal', error);
+        onToast('Failed to initialize terminal renderer');
+      });
 
     return () => {
-      resizeObserver.disconnect();
-      dataDisposable.dispose();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
-      term.dispose();
+      isDisposed = true;
+      setIsTerminalReady(false);
+      terminalSessionRef.current?.dispose();
+      terminalSessionRef.current = null;
+      container.replaceChildren();
     };
-  }, [sendPayload]);
+  }, [onToast, sendPayload]);
 
   useEffect(() => {
     if (!terminalId) {
       socketRef.current?.close();
       socketRef.current = null;
-      terminalRef.current?.clear();
+      terminalSessionRef.current?.terminal.clear();
+      queueMicrotask(() => setConnectionState('disconnected'));
+      return undefined;
+    }
+
+    if (!isTerminalReady) {
       return undefined;
     }
 
@@ -120,13 +129,8 @@ export const TerminalPane = ({
 
     ws.addEventListener('open', () => {
       setConnectionState('connected');
-      const term = terminalRef.current;
-      const fitAddon = fitAddonRef.current;
-      if (!term || !fitAddon) {
-        return;
-      }
-      fitAddon.fit();
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      terminalSessionRef.current?.fitAddon.fit();
+      sendResizePayload();
     });
 
     ws.addEventListener('message', (event) => {
@@ -143,26 +147,23 @@ export const TerminalPane = ({
       }
       onStreamEvent(parsed);
 
-      const term = terminalRef.current;
-      const fitAddon = fitAddonRef.current;
-      if (!term) {
+      const session = terminalSessionRef.current;
+      if (!session) {
         return;
       }
 
       if (parsed.type === 'ready') {
-        term.clear();
+        session.terminal.clear();
         if (parsed.snapshot.length > 0) {
-          term.write(parsed.snapshot);
+          session.terminal.write(parsed.snapshot);
         }
-        if (fitAddon) {
-          fitAddon.fit();
-          sendPayload({ type: 'resize', cols: term.cols, rows: term.rows });
-        }
+        session.fitAddon.fit();
+        sendResizePayload();
         return;
       }
 
       if (parsed.type === 'output') {
-        term.write(parsed.data);
+        session.terminal.write(parsed.data);
         return;
       }
 
@@ -186,7 +187,7 @@ export const TerminalPane = ({
         socketRef.current = null;
       }
     };
-  }, [onStreamEvent, onToast, reconnectToken, sendPayload, terminalId]);
+  }, [isTerminalReady, onStreamEvent, onToast, reconnectToken, sendResizePayload, terminalId]);
 
   return (
     <Card className="flex h-full min-h-0 flex-col border-border/60 bg-card/80">
