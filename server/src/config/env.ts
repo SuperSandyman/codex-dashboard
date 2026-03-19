@@ -3,6 +3,16 @@ import path from 'node:path';
 
 import dotenv from 'dotenv';
 
+interface SyncEnvConfig {
+  readonly host: string;
+  readonly sshUser: string | null;
+  readonly sshPort: number;
+  readonly allowedRoots: readonly string[];
+  readonly workspaceRoot: string;
+  readonly statusTimeoutMs: number;
+  readonly previewTtlMs: number;
+}
+
 interface EnvConfig {
   readonly port: number;
   readonly bindHost: string;
@@ -14,6 +24,7 @@ interface EnvConfig {
   readonly appServerArgs: readonly string[];
   readonly appServerCwd: string | null;
   readonly appServerRequestTimeoutMs: number;
+  readonly sync: SyncEnvConfig | null;
   readonly envPath: string | null;
 }
 
@@ -22,6 +33,9 @@ const DEFAULT_BIND_HOST = '127.0.0.1';
 const DEFAULT_APP_SERVER_COMMAND = 'codex';
 const DEFAULT_APP_SERVER_ARGS = ['app-server'];
 const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 120000;
+const DEFAULT_SYNC_SSH_PORT = 22;
+const DEFAULT_SYNC_STATUS_TIMEOUT_MS = 5000;
+const DEFAULT_SYNC_PREVIEW_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_TERMINAL_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_EDITOR_MAX_FILE_SIZE_BYTES = 1024 * 1024;
 const DEFAULT_EDITOR_MAX_SAVE_BYTES = 1024 * 1024;
@@ -117,6 +131,126 @@ const parseAbsolutePath = (
   return rawValue;
 };
 
+const parseRequiredString = (
+  key: string,
+  rawValue: string | undefined,
+  errors: string[],
+): string | null => {
+  if (rawValue === undefined) {
+    errors.push(`${key} は必須です。`);
+    return null;
+  }
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0) {
+    errors.push(`${key} は空文字にできません。`);
+    return null;
+  }
+  return trimmed;
+};
+
+const parseOptionalAbsolutePathList = (
+  key: string,
+  rawValue: string | undefined,
+  errors: string[],
+): string[] | null => {
+  if (rawValue === undefined || rawValue.trim().length === 0) {
+    return null;
+  }
+
+  let entries: unknown;
+  try {
+    entries = JSON.parse(rawValue);
+  } catch {
+    entries = rawValue.split(path.delimiter).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  }
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    errors.push(`${key} は絶対パス配列で指定してください。`);
+    return null;
+  }
+
+  const normalized: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== 'string' || entry.trim().length === 0) {
+      errors.push(`${key} は絶対パス配列で指定してください。`);
+      return null;
+    }
+    if (!path.isAbsolute(entry)) {
+      errors.push(`${key} の各要素は絶対パスで指定してください。`);
+      return null;
+    }
+    normalized.push(entry);
+  }
+
+  return [...new Set(normalized)];
+};
+
+const parseSyncConfig = (
+  env: NodeJS.ProcessEnv,
+  errors: string[],
+): SyncEnvConfig | null => {
+  const rawHost = env.SYNC_HOST;
+  const rawAllowedRoots = env.SYNC_ALLOWED_ROOTS;
+  const rawWorkspaceRoot = env.SYNC_WORKSPACE_ROOT;
+  const rawSshUser = env.SYNC_SSH_USER;
+  const rawSshPort = env.SYNC_SSH_PORT;
+  const rawStatusTimeout = env.SYNC_STATUS_TIMEOUT_MS;
+  const rawPreviewTtl = env.SYNC_PREVIEW_TTL_MS;
+
+  const hasAnySyncValue = [
+    rawHost,
+    rawAllowedRoots,
+    rawWorkspaceRoot,
+    rawSshUser,
+    rawSshPort,
+    rawStatusTimeout,
+    rawPreviewTtl,
+  ].some((value) => value !== undefined);
+
+  if (!hasAnySyncValue) {
+    return null;
+  }
+
+  const host = parseRequiredString('SYNC_HOST', rawHost, errors);
+  const workspaceRoot = parseAbsolutePath('SYNC_WORKSPACE_ROOT', rawWorkspaceRoot, errors);
+  if (workspaceRoot === null) {
+    errors.push('SYNC_WORKSPACE_ROOT は必須です。');
+  }
+  const allowedRoots = parseOptionalAbsolutePathList('SYNC_ALLOWED_ROOTS', rawAllowedRoots, errors);
+  if (allowedRoots === null || allowedRoots.length === 0) {
+    errors.push('SYNC_ALLOWED_ROOTS は 1 件以上の絶対パスが必要です。');
+  }
+
+  const sshUser = rawSshUser?.trim().length ? rawSshUser.trim() : null;
+  const sshPort = parsePositiveInteger('SYNC_SSH_PORT', rawSshPort, DEFAULT_SYNC_SSH_PORT, errors);
+  const statusTimeoutMs = parsePositiveInteger(
+    'SYNC_STATUS_TIMEOUT_MS',
+    rawStatusTimeout,
+    DEFAULT_SYNC_STATUS_TIMEOUT_MS,
+    errors,
+  );
+  const previewTtlMs = parsePositiveInteger(
+    'SYNC_PREVIEW_TTL_MS',
+    rawPreviewTtl,
+    DEFAULT_SYNC_PREVIEW_TTL_MS,
+    errors,
+  );
+
+  if (!host || !workspaceRoot || !allowedRoots || allowedRoots.length === 0) {
+    return null;
+  }
+
+  return {
+    host,
+    sshUser,
+    sshPort,
+    allowedRoots,
+    workspaceRoot,
+    statusTimeoutMs,
+    previewTtlMs,
+  };
+};
+
 const parseAppServerCommand = (rawValue: string | undefined, errors: string[]): string => {
   const value = rawValue?.trim() ?? DEFAULT_APP_SERVER_COMMAND;
   if (value.length === 0) {
@@ -184,6 +318,7 @@ export const loadEnvConfig = (): EnvConfig => {
     DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS,
     errors,
   );
+  const sync = parseSyncConfig(process.env, errors);
 
   if (errors.length > 0) {
     throw new Error([
@@ -203,6 +338,7 @@ export const loadEnvConfig = (): EnvConfig => {
     appServerArgs,
     appServerCwd,
     appServerRequestTimeoutMs,
+    sync,
     envPath,
   };
 };

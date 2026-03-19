@@ -2,6 +2,7 @@ import { MenuIcon } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
 import { ChatPane } from '../chat/ChatPane';
+import { SyncPane } from '../sync/SyncPane';
 import { CreateSessionDialog } from '../workbench/CreateSessionDialog';
 import { SidebarNavigation } from '../workbench/SidebarNavigation';
 import { WorkbenchTabsPanel } from '../workbench/WorkbenchTabsPanel';
@@ -31,6 +32,7 @@ export const DashboardLayout = ({ controller }: DashboardLayoutProps) => {
     createDialogProps,
     sidebarProps,
     chatPaneProps,
+    syncPaneProps,
     workbenchTabsPanelProps,
     onToggleMenu,
     onCloseMenu,
@@ -78,7 +80,8 @@ export const DashboardLayout = ({ controller }: DashboardLayoutProps) => {
           onTouchEnd={mobileSwitcherHandlers.onTouchEnd}
         >
           {activeView === 'chat' ? <ChatPane key={chatPaneProps.chatId ?? 'chat-none'} {...chatPaneProps} /> : null}
-          {activeView !== 'chat' ? <WorkbenchTabsPanel {...workbenchTabsPanelProps} /> : null}
+          {activeView === 'sync' ? <SyncPane {...syncPaneProps} /> : null}
+          {activeView !== 'chat' && activeView !== 'sync' ? <WorkbenchTabsPanel {...workbenchTabsPanelProps} /> : null}
         </section>
       </main>
 
@@ -94,12 +97,12 @@ export const DashboardLayout = ({ controller }: DashboardLayoutProps) => {
             Chat ID: {selectedChat.id}
           </div>
         ) : null}
-        {activeView !== 'chat' && activeWorkbenchTab?.kind === 'terminal' && activeWorkbenchTerminal ? (
+        {activeView !== 'chat' && activeView !== 'sync' && activeWorkbenchTab?.kind === 'terminal' && activeWorkbenchTerminal ? (
           <div className="max-w-[calc(100vw-2rem)] truncate rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
             Terminal ID: {activeWorkbenchTerminal.id}
           </div>
         ) : null}
-        {activeView !== 'chat' && activeWorkbenchTab?.kind === 'editor' && selectedFilePath ? (
+        {activeView !== 'chat' && activeView !== 'sync' && activeWorkbenchTab?.kind === 'editor' && selectedFilePath ? (
           <div className="max-w-[calc(100vw-2rem)] truncate rounded-full border border-white/10 bg-[#171717] px-3 py-1 text-[11px] text-[#9f9f9f]">
             File: {selectedFilePath}
           </div>

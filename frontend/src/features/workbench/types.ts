@@ -1,7 +1,7 @@
 /**
  * ダッシュボードのトップレベル表示モード。
  */
-export type AppView = 'chat' | 'terminal' | 'editor';
+export type AppView = 'chat' | 'terminal' | 'editor' | 'sync';
 
 /**
  * 新規セッション作成ダイアログのモード。

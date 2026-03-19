@@ -9,6 +9,8 @@ import { WebSocketServer } from 'ws';
 import { AppServerChatBridge, ChatBridgeError } from './appServer/chatBridge.js';
 import { loadEnvConfig } from './config/env.js';
 import { EditorFileService, EditorFileServiceError } from './editor/fileService.js';
+import { SyncService } from './sync/service.js';
+import { SyncServiceError } from './sync/types.js';
 import { TerminalSessionError, TerminalSessionManager } from './terminal/sessionManager.js';
 import { listLanIpv4Addresses } from './utils/network.js';
 
@@ -72,6 +74,24 @@ interface EditorWriteRequestBody {
   readonly path: string;
   readonly content: string;
   readonly expectedVersion: string;
+}
+
+interface SyncImportPreviewRequestBody {
+  readonly sourcePath: string;
+  readonly workspaceName: string;
+}
+
+interface SyncImportExecuteRequestBody extends SyncImportPreviewRequestBody {
+  readonly previewToken: string;
+}
+
+interface SyncExportPreviewRequestBody {
+  readonly workspaceName: string;
+  readonly destinationPath: string;
+}
+
+interface SyncExportExecuteRequestBody extends SyncExportPreviewRequestBody {
+  readonly previewToken: string;
 }
 
 const MAX_TERMINAL_WRITE_LENGTH = 8192;
@@ -397,6 +417,101 @@ const parseEditorWriteBody = (value: unknown): EditorWriteRequestBody | ApiError
   };
 };
 
+const parseRequiredStringField = (
+  value: unknown,
+  key: string,
+): { ok: true; value: string } | { ok: false; error: ApiError } => {
+  if (typeof value !== 'string') {
+    return {
+      ok: false,
+      error: { code: 'invalid_payload', message: `${key} は string で指定してください。` },
+    };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return {
+      ok: false,
+      error: { code: 'invalid_payload', message: `${key} は空文字にできません。` },
+    };
+  }
+  return {
+    ok: true,
+    value: trimmed,
+  };
+};
+
+const parseSyncImportPreviewBody = (value: unknown): SyncImportPreviewRequestBody | ApiError => {
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'sourcePath / workspaceName を含む JSON が必要です。' };
+  }
+  const sourcePath = parseRequiredStringField(value.sourcePath, 'sourcePath');
+  if (!sourcePath.ok) {
+    return sourcePath.error;
+  }
+  const workspaceName = parseRequiredStringField(value.workspaceName, 'workspaceName');
+  if (!workspaceName.ok) {
+    return workspaceName.error;
+  }
+  return {
+    sourcePath: sourcePath.value,
+    workspaceName: workspaceName.value,
+  };
+};
+
+const parseSyncImportExecuteBody = (value: unknown): SyncImportExecuteRequestBody | ApiError => {
+  const previewBody = parseSyncImportPreviewBody(value);
+  if ('code' in previewBody) {
+    return previewBody;
+  }
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'previewToken を含む JSON が必要です。' };
+  }
+  const previewToken = parseRequiredStringField(value.previewToken, 'previewToken');
+  if (!previewToken.ok) {
+    return previewToken.error;
+  }
+  return {
+    ...previewBody,
+    previewToken: previewToken.value,
+  };
+};
+
+const parseSyncExportPreviewBody = (value: unknown): SyncExportPreviewRequestBody | ApiError => {
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'workspaceName / destinationPath を含む JSON が必要です。' };
+  }
+  const workspaceName = parseRequiredStringField(value.workspaceName, 'workspaceName');
+  if (!workspaceName.ok) {
+    return workspaceName.error;
+  }
+  const destinationPath = parseRequiredStringField(value.destinationPath, 'destinationPath');
+  if (!destinationPath.ok) {
+    return destinationPath.error;
+  }
+  return {
+    workspaceName: workspaceName.value,
+    destinationPath: destinationPath.value,
+  };
+};
+
+const parseSyncExportExecuteBody = (value: unknown): SyncExportExecuteRequestBody | ApiError => {
+  const previewBody = parseSyncExportPreviewBody(value);
+  if ('code' in previewBody) {
+    return previewBody;
+  }
+  if (!isRecord(value)) {
+    return { code: 'invalid_payload', message: 'previewToken を含む JSON が必要です。' };
+  }
+  const previewToken = parseRequiredStringField(value.previewToken, 'previewToken');
+  if (!previewToken.ok) {
+    return previewToken.error;
+  }
+  return {
+    ...previewBody,
+    previewToken: previewToken.value,
+  };
+};
+
 const respondBridgeError = (error: unknown): Response => {
   if (error instanceof ChatBridgeError) {
     return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
@@ -415,6 +530,14 @@ const respondTerminalError = (error: unknown): Response => {
 
 const respondEditorError = (error: unknown): Response => {
   if (error instanceof EditorFileServiceError) {
+    return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
+  }
+  const message = error instanceof Error ? error.message : '不明なエラーが発生しました。';
+  return Response.json(toErrorResponse('internal_error', message), { status: 500 });
+};
+
+const respondSyncError = (error: unknown): Response => {
+  if (error instanceof SyncServiceError) {
     return Response.json(toErrorResponse(error.code, error.message), { status: error.status });
   }
   const message = error instanceof Error ? error.message : '不明なエラーが発生しました。';
@@ -448,6 +571,7 @@ const editorFileService = new EditorFileService({
   maxReadFileSizeBytes: envConfig.editorMaxFileSizeBytes,
   maxSaveFileSizeBytes: envConfig.editorMaxSaveBytes,
 });
+const syncService = new SyncService(envConfig.sync);
 
 const distRoot = path.resolve(process.cwd(), '..', 'frontend', 'dist');
 const distRootWithSep = distRoot.endsWith(path.sep) ? distRoot : `${distRoot}${path.sep}`;
@@ -497,6 +621,130 @@ const resolveContentType = (targetPath: string): string => {
 };
 
 app.get('/api/health', (c) => c.json({ ok: true }));
+
+app.get('/api/sync/status', async (c) => {
+  try {
+    const status = await syncService.getStatus();
+    return c.json(status);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
+
+app.get('/api/sync/workspaces', async (c) => {
+  try {
+    const result = await syncService.listWorkspaces();
+    return c.json(result);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
+
+app.post('/api/sync/import/preview', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseSyncImportPreviewBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const preview = await syncService.previewImport(parsed);
+    return c.json(preview);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
+
+app.post('/api/sync/import', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseSyncImportExecuteBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const result = await syncService.startImport(parsed);
+    return c.json(result, 202);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
+
+app.post('/api/sync/export/preview', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseSyncExportPreviewBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const preview = await syncService.previewExport(parsed);
+    return c.json(preview);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
+
+app.post('/api/sync/export', async (c) => {
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json(toErrorResponse('invalid_payload', 'JSON の解析に失敗しました。'), 400);
+  }
+
+  const parsed = parseSyncExportExecuteBody(payload);
+  if ('code' in parsed) {
+    return c.json(toErrorResponse(parsed.code, parsed.message), 400);
+  }
+
+  try {
+    const result = await syncService.startExport({
+      sourcePath: parsed.destinationPath,
+      workspaceName: parsed.workspaceName,
+      previewToken: parsed.previewToken,
+    });
+    return c.json(result, 202);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
+
+app.get('/api/sync/jobs/:jobId', (c) => {
+  try {
+    const job = syncService.getJob(c.req.param('jobId'));
+    return c.json(job);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
+
+app.get('/api/sync/jobs/:jobId/error', (c) => {
+  try {
+    const errorDetails = syncService.getJobError(c.req.param('jobId'));
+    return c.json(errorDetails);
+  } catch (error) {
+    return respondSyncError(error);
+  }
+});
 
 app.get('/api/chats', async (c) => {
   try {

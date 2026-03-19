@@ -24,6 +24,8 @@ import {
 } from '../editor/bookmarks/indexedDbStore';
 import type { EditorFileBookmark } from '../editor/bookmarks/types';
 import type { TerminalStreamEvent } from '../terminal/protocol';
+import { SyncPane } from '../sync/SyncPane';
+import { useSyncController } from '../sync/useSyncController';
 import { CreateSessionDialog } from '../workbench/CreateSessionDialog';
 import { SidebarNavigation } from '../workbench/SidebarNavigation';
 import { WorkbenchTabsPanel } from '../workbench/WorkbenchTabsPanel';
@@ -69,6 +71,7 @@ interface UseDashboardControllerResult {
   readonly createDialogProps: ComponentProps<typeof CreateSessionDialog>;
   readonly sidebarProps: ComponentProps<typeof SidebarNavigation>;
   readonly chatPaneProps: ComponentProps<typeof ChatPane>;
+  readonly syncPaneProps: ComponentProps<typeof SyncPane>;
   readonly workbenchTabsPanelProps: ComponentProps<typeof WorkbenchTabsPanel>;
   readonly onToggleMenu: () => void;
   readonly onCloseMenu: () => void;
@@ -146,7 +149,7 @@ export const useDashboardController = (): UseDashboardControllerResult => {
   }, [activeWorkbenchTab, terminals]);
 
   const activeWorkbenchKind: WorkbenchTabKind | null = useMemo(() => {
-    if (activeView === 'chat') {
+    if (activeView === 'chat' || activeView === 'sync') {
       return null;
     }
     if (activeWorkbenchTab) {
@@ -170,6 +173,10 @@ export const useDashboardController = (): UseDashboardControllerResult => {
     setToast({ message });
     window.setTimeout(() => setToast(null), 3200);
   }, []);
+
+  const syncController = useSyncController({
+    onToast: showToast,
+  });
 
   const {
     chats,
@@ -922,6 +929,10 @@ export const useDashboardController = (): UseDashboardControllerResult => {
       setIsMenuOpen(false);
     },
     onCreateChat: openChatCreateDialog,
+    onOpenSyncView: () => {
+      setActiveView('sync');
+      setIsMenuOpen(false);
+    },
     onOpenTerminalWorkbench: handleFocusTerminalWorkbench,
     onCreateTerminal: openTerminalCreateDialog,
     onOpenEditorWorkbench: () => {
@@ -952,6 +963,37 @@ export const useDashboardController = (): UseDashboardControllerResult => {
     onRespondUserInput: handleRespondUserInput,
     onUpdateLaunchOptions: handleUpdateSelectedLaunchOptions,
     onOpenFileFromChat: handleOpenFileFromChat,
+  };
+
+  const syncPaneProps: ComponentProps<typeof SyncPane> = {
+    status: syncController.status,
+    workspaces: syncController.workspaces,
+    importSourcePath: syncController.importSourcePath,
+    importWorkspaceName: syncController.importWorkspaceName,
+    exportWorkspaceName: syncController.exportWorkspaceName,
+    exportDestinationPath: syncController.exportDestinationPath,
+    importPreview: syncController.importPreview,
+    exportPreview: syncController.exportPreview,
+    activeJob: syncController.activeJob,
+    activeJobError: syncController.activeJobError,
+    isLoadingStatus: syncController.isLoadingStatus,
+    isLoadingWorkspaces: syncController.isLoadingWorkspaces,
+    isLoadingImportPreview: syncController.isLoadingImportPreview,
+    isLoadingExportPreview: syncController.isLoadingExportPreview,
+    confirmKind: syncController.confirmState.kind,
+    isActionLocked: syncController.isActionLocked,
+    onChangeImportSourcePath: syncController.onChangeImportSourcePath,
+    onChangeImportWorkspaceName: syncController.onChangeImportWorkspaceName,
+    onChangeExportWorkspaceName: syncController.onChangeExportWorkspaceName,
+    onChangeExportDestinationPath: syncController.onChangeExportDestinationPath,
+    onReloadStatus: syncController.onReloadStatus,
+    onReloadWorkspaces: syncController.onReloadWorkspaces,
+    onPreviewImport: syncController.onPreviewImport,
+    onPreviewExport: syncController.onPreviewExport,
+    onRequestImport: syncController.onRequestImport,
+    onRequestExport: syncController.onRequestExport,
+    onCloseConfirm: syncController.onCloseConfirm,
+    onConfirmExecute: syncController.onConfirmExecute,
   };
 
   const workbenchTabsPanelProps: ComponentProps<typeof WorkbenchTabsPanel> = {
@@ -1001,6 +1043,7 @@ export const useDashboardController = (): UseDashboardControllerResult => {
     createDialogProps,
     sidebarProps,
     chatPaneProps,
+    syncPaneProps,
     workbenchTabsPanelProps,
     onToggleMenu: () => setIsMenuOpen((prev) => !prev),
     onCloseMenu: () => setIsMenuOpen(false),
