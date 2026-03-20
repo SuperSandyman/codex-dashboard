@@ -37,6 +37,9 @@ WORKSPACE_ROOT=/absolute/path/to/workspace
 APP_SERVER_COMMAND=codex
 APP_SERVER_ARGS=app-server
 APP_SERVER_CWD=/absolute/path/to/workspace
+SYNC_HOST=main-pc
+SYNC_ALLOWED_ROOTS=["/home/sandyman/projects","/home/sandyman/worktrees"]
+SYNC_WORKSPACE_ROOT=/srv/codex-dashboard/workspaces
 ```
 
 ## Environment Variables
@@ -48,6 +51,13 @@ APP_SERVER_CWD=/absolute/path/to/workspace
 - `APP_SERVER_ARGS` (default: `app-server`): app-server arguments (space-separated)
 - `APP_SERVER_CWD` (optional): working directory for the app-server child process (absolute path)
 - `APP_SERVER_REQUEST_TIMEOUT_MS` (default: `120000`): app-server RPC timeout
+- `SYNC_HOST` (optional): main PC SSH host name used by Import / Export
+- `SYNC_SSH_USER` (optional): SSH user override for sync
+- `SYNC_SSH_PORT` (default: `22`): SSH port for sync
+- `SYNC_ALLOWED_ROOTS` (optional): JSON array or path-delimited absolute roots allowed on the main PC
+- `SYNC_WORKSPACE_ROOT` (optional): server-side workspace storage root for sync
+- `SYNC_STATUS_TIMEOUT_MS` (default: `5000`): timeout for SSH status probe
+- `SYNC_PREVIEW_TTL_MS` (default: `300000`): preview token expiry in ms
 - `TERMINAL_IDLE_TIMEOUT_MS` (default: `600000`): terminal idle timeout in ms
 - `EDITOR_MAX_FILE_SIZE_BYTES` (default: `1048576`): max file read size in Editor
 - `EDITOR_MAX_SAVE_BYTES` (default: `1048576`): max file save size in Editor
@@ -103,6 +113,7 @@ pnpm start
 - Chat actions: `POST /api/chats/:id/messages`, `POST /api/chats/:id/interrupt`, `POST /api/chats/:id/approvals/:itemId`, `POST /api/chats/:id/user-input/:itemId`
 - Editor: `GET /api/editor/tree`, `GET/PUT /api/editor/file`
 - Terminals: `GET/POST /api/terminals`, `POST /api/terminals/:id/write`, `POST /api/terminals/:id/resize`
+- Sync: `GET /api/sync/status`, `GET /api/sync/workspaces`, `POST /api/sync/import/preview`, `POST /api/sync/import`, `POST /api/sync/export/preview`, `POST /api/sync/export`, `GET /api/sync/jobs/:jobId`, `GET /api/sync/jobs/:jobId/error`
 - Chat WS: `/ws/chats/:threadId`
 - Terminal WS: `/ws/terminals/:terminalId`
 

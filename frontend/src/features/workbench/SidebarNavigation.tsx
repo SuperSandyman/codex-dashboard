@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRightIcon,
   FilePenLineIcon,
   MessageSquareIcon,
   PlusIcon,
@@ -26,6 +27,7 @@ interface SidebarNavigationProps {
   readonly onOpenChatView: () => void;
   readonly onSelectChat: (chatId: string) => void;
   readonly onCreateChat: () => void;
+  readonly onOpenSyncView: () => void;
   readonly onOpenTerminalWorkbench: () => void;
   readonly onCreateTerminal: () => void;
   readonly onOpenEditorWorkbench: () => void;
@@ -61,6 +63,7 @@ export const SidebarNavigation = (props: SidebarNavigationProps) => {
     onOpenChatView,
     onSelectChat,
     onCreateChat,
+    onOpenSyncView,
     onOpenTerminalWorkbench,
     onCreateTerminal,
     onOpenEditorWorkbench,
@@ -120,6 +123,15 @@ export const SidebarNavigation = (props: SidebarNavigationProps) => {
             <FilePenLineIcon className="size-4" />
             <span>エディタ</span>
           </button>
+
+          <button
+            type="button"
+            className={toSidebarRowClassName(activeView === 'sync')}
+            onClick={onOpenSyncView}
+          >
+            <ArrowLeftRightIcon className="size-4" />
+            <span>Sync</span>
+          </button>
         </div>
 
         <div className="h-px bg-white/10" />
@@ -154,6 +166,11 @@ export const SidebarNavigation = (props: SidebarNavigationProps) => {
                 );
               })}
             </div>
+          </div>
+        ) : activeView === 'sync' ? (
+          <div className="grid gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-[#bfbfbf]">
+            <p>Import / Export の preview、確認、進捗確認をここから実行できます。</p>
+            <p>メイン機がオフラインの場合は status を確認して再試行してください。</p>
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-hidden bg-[#181818]">
